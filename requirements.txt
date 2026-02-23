@@ -6,7 +6,7 @@ alembic==1.14.0
 pydantic==2.10.4
 pydantic-settings==2.7.0
 python-dotenv==1.0.1
-python-multipart==0.0.20
+python-multipart==0.0.22
 
 # LLM client
 anthropic==0.40.0
