@@ -1,6 +1,6 @@
-# VeritasAI — AI-Powered Document Governance Platform
+# AuctoriaAI — AI-Powered Document Governance Platform
 
-VeritasAI is a full-stack governance platform that enforces quality, accuracy, and compliance for AI-generated documents. It implements a structured multi-stage pipeline where every document travels through automated fact extraction, LLM-powered draft generation, rubric-based QA evaluation, claim validation, and human review — all with full audit trails.
+AuctoriaAI is a full-stack governance platform that enforces quality, accuracy, and compliance for AI-generated documents. It implements a structured multi-stage pipeline where every document travels through automated fact extraction, LLM-powered draft generation, rubric-based QA evaluation, claim validation, and human review — all with full audit trails.
 
 ---
 
@@ -33,7 +33,7 @@ Enterprise teams using LLMs to generate whitepapers, technical documents, and co
 2. **Unverified integrations/compliance** — Documents claim integrations or certifications that don't exist in the official record.
 3. **No governance trail** — Generated content bypasses review processes, causing regulatory exposure.
 
-VeritasAI solves this with an automated pipeline: documents are factually grounded before generation, validated against an approved claim registry, scored by rubric, and routed to human reviewers before any document is approved for release.
+AuctoriaAI solves this with an automated pipeline: documents are factually grounded before generation, validated against an approved claim registry, scored by rubric, and routed to human reviewers before any document is approved for release.
 
 ---
 
@@ -41,7 +41,7 @@ VeritasAI solves this with an automated pipeline: documents are factually ground
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        VeritasAI Platform                           │
+│                        AuctoriaAI Platform                           │
 │                                                                     │
 │  ┌──────────────────┐         ┌──────────────────────────────────┐  │
 │  │  React Frontend  │◄───────►│      FastAPI Backend             │  │
@@ -81,7 +81,7 @@ VeritasAI solves this with an automated pipeline: documents are factually ground
 
 ## 3. Document Lifecycle Pipeline
 
-This is the core concept of VeritasAI. Every document follows a strict state machine with automated and human-in-the-loop steps.
+This is the core concept of AuctoriaAI. Every document follows a strict state machine with automated and human-in-the-loop steps.
 
 ### State Machine
 
@@ -178,7 +178,7 @@ APPROVED BLOCKED
 ## 5. Project Structure
 
 ```
-VeritasAI/
+AuctoriaAI/
 │
 ├── app/                                  # Backend application root
 │   ├── main.py                           # FastAPI app init, CORS, router registration
@@ -539,7 +539,7 @@ else:
 
 ## 9. Governance Gates & Safety Mechanisms
 
-VeritasAI has five sequential safety gates. A document must pass ALL of them to reach APPROVED.
+AuctoriaAI has five sequential safety gates. A document must pass ALL of them to reach APPROVED.
 
 ### Gate 1 — Registry Freshness Gate
 - **Where**: `extraction_service.py` before every fact extraction
@@ -677,7 +677,7 @@ services/
 
 ```bash
 # Clone and enter project directory
-cd VeritasAI
+cd AuctoriaAI
 
 # Create virtual environment
 python -m venv venv
@@ -707,7 +707,7 @@ Interactive docs (Swagger UI): `http://localhost:8000/docs`
 
 ```bash
 # In a separate terminal
-cd VeritasAI/frontend
+cd AuctoriaAI/frontend
 
 # Install Node dependencies
 npm install
@@ -885,4 +885,4 @@ Fact-grounded generation requires a complete source document, fact extraction, a
 
 ## Summary
 
-VeritasAI is best understood as an **LLM governance pipeline** wrapped in a full-stack application. Its core value is not document generation (Claude can do that alone) but the **automated and human verification layer** that sits between raw LLM output and approved organizational communication. Every approval in VeritasAI is backed by a QA score, a claim validation report, and a human reviewer decision — all stored in an immutable audit trail.
+AuctoriaAI is best understood as an **LLM governance pipeline** wrapped in a full-stack application. Its core value is not document generation (Claude can do that alone) but the **automated and human verification layer** that sits between raw LLM output and approved organizational communication. Every approval in AuctoriaAI is backed by a QA score, a claim validation report, and a human reviewer decision — all stored in an immutable audit trail.
