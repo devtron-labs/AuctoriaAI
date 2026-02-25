@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 
 from app.models.models import AuditLog, Document, DocumentStatus, DraftVersion, FactSheet
 from app.services import settings_service, llm_adapter
-from app.services.exceptions import NoFactSheetError, NotFoundError
+from app.services.exceptions import NoFactSheetError, NotFoundError, RateLimitError
 from app.services.settings_service import ActiveSettings
 
 logger = logging.getLogger(__name__)
@@ -161,14 +161,15 @@ def _is_retryable_error(exc: BaseException) -> bool:
 
     Covers both Anthropic and OpenAI-compatible providers (Gemini, xAI, Perplexity).
     Retryable conditions:
-    - HTTP 429 (rate limit)   — RateLimitError from either SDK
     - HTTP 5xx (server error) — APIStatusError with status >= 500 from either SDK
+
+    RateLimitError (429) is intentionally excluded from automatic tenacity retries
+    to prevent excessive API hit loops when a quota is truly exhausted. Higher-level
+    logic manages document-specific retries.
 
     Timeouts are intentionally excluded: retrying a timed-out call would compound
     the delay (3 × timeout_seconds). Let timeouts surface immediately.
     """
-    if isinstance(exc, (anthropic.RateLimitError, openai.RateLimitError)):
-        return True
     if isinstance(exc, anthropic.APIStatusError) and exc.status_code >= 500:
         return True
     if isinstance(exc, openai.APIStatusError) and exc.status_code >= 500:
@@ -315,6 +316,10 @@ def generate_draft(db: Session, document_id: str, tone: str = "formal") -> Draft
     # ── 5. Call LLM ───────────────────────────────────────────────────────
     try:
         content_markdown = _call_llm(prompt, tone, llm_model, active, timeout_seconds)
+    except (anthropic.RateLimitError, openai.RateLimitError) as exc:
+        reason = llm_adapter.clean_llm_error(exc)
+        logger.error("LLM rate limit / quota exceeded: document_id=%s error=%s", document_id, exc)
+        raise RateLimitError(f"LLM rate Limit Exceeded: {reason}") from exc
     except Exception as exc:
         logger.error(
             "LLM call failed: document_id=%s error_type=%s error=%s",
@@ -1047,6 +1052,10 @@ def generate_draft_from_prompt(
     )
     try:
         content_markdown = _call_llm(llm_prompt, tone, llm_model, active, _stage2_timeout)
+    except (anthropic.RateLimitError, openai.RateLimitError) as exc:
+        reason = llm_adapter.clean_llm_error(exc)
+        logger.error("LLM rate limit / quota exceeded: document_id=%s error=%s", document_id, exc)
+        raise RateLimitError(f"LLM rate Limit Exceeded: {reason}") from exc
     except Exception as exc:
         logger.error(
             "LLM generation failed: document_id=%s error_type=%s error=%s",

@@ -16,6 +16,7 @@ Public API:
 
 import os
 import logging
+import re
 from typing import Optional
 
 import anthropic
@@ -32,6 +33,35 @@ _BASE_URLS: dict[str, str] = {
     "xai":        "https://api.x.ai/v1",
     "perplexity": "https://api.perplexity.ai",
 }
+
+
+def clean_llm_error(exc: Exception) -> str:
+    """Extract a concise, human-readable reason from an LLM provider exception.
+
+    Specifically targets 'Quota exceeded' and 'Rate limit' details to provide
+    actionable feedback without the full technical blob.
+    """
+    raw_msg = str(exc)
+
+    # 1. Look for the specific Google/Gemini 'Quota exceeded' pattern
+    # Pattern: * Quota exceeded for metric: <metric>, limit: <val>, model: <model>
+    quota_match = re.search(r"\* (Quota exceeded for metric: [^,\n]+)", raw_msg)
+    if quota_match:
+        return quota_match.group(1)
+
+    # 2. Look for Anthropic / OpenAI common rate limit phrases
+    if "rate limit" in raw_msg.lower():
+        # Try to find a 'retry in X seconds' part
+        retry_match = re.search(r"(retry in \d+\.?\d*s)", raw_msg, re.IGNORECASE)
+        if retry_match:
+            return f"Rate limit exceeded ({retry_match.group(1)})"
+        return "Rate limit exceeded"
+
+    if "quota" in raw_msg.lower():
+        return "Quota exceeded"
+
+    # 3. Fallback to a truncated version of the raw message
+    return raw_msg[:120].strip()
 
 
 def detect_provider(model_name: str) -> str:

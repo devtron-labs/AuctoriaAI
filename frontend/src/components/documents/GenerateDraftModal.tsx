@@ -49,12 +49,14 @@ interface GenerateDraftModalProps {
   documentId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onClose?: (hasError: boolean) => void;
 }
 
 export default function GenerateDraftModal({
   documentId,
   open,
   onOpenChange,
+  onClose,
 }: GenerateDraftModalProps) {
   const [prompt, setPrompt] = useState('');
   const [documentType, setDocumentType] = useState<DocumentType>('whitepaper');
@@ -67,7 +69,9 @@ export default function GenerateDraftModal({
   };
 
   const handleClose = () => {
+    const hasError = !!error || currentStage === 'DRAFT_FAILED';
     onOpenChange(false);
+    onClose?.(hasError);
     // Reset state after dialog close transition finishes
     setTimeout(() => {
       reset();
@@ -229,7 +233,9 @@ export default function GenerateDraftModal({
             {apiError && (
               <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{apiError}</span>
+                <div className="flex-1 min-w-0 break-all">
+                  {apiError}
+                </div>
               </div>
             )}
 

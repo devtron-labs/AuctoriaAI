@@ -18,6 +18,10 @@ class ExtractionError(Exception):
     """Raised when LLM extraction fails or the result fails schema validation."""
 
 
+class RateLimitError(Exception):
+    """Raised when an LLM provider returns a 429 (Rate Limit / Quota Exceeded)."""
+
+
 # ── Ticket 2.4 — Registry Sync Enforcement ───────────────────────────────────
 
 class RegistryNotInitializedError(Exception):

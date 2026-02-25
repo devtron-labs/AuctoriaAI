@@ -72,6 +72,7 @@ class Document(Base):
 
     # Pipeline state tracking — populated by each stage of the processing pipeline
     current_stage = Column(String, nullable=True)
+    error_message = Column(String, nullable=True)
     validation_progress = Column(Integer, default=0, nullable=False, server_default="0")
 
     created_at = Column(DateTime(timezone=True), nullable=False, default=_now)

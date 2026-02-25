@@ -73,6 +73,7 @@ from app.services.exceptions import (
     MissingOverrideReasonError,
     NoFactSheetError,
     NotFoundError,
+    RateLimitError,
     RegistryNotInitializedError,
     RegistryStaleError,
 )
@@ -153,6 +154,7 @@ def get_document_status(document_id: str, db: Session = Depends(get_db)):
     return DocumentStatusResponse(
         status=doc.status,
         current_stage=doc.current_stage,
+        error_message=doc.error_message,
         validation_progress=doc.validation_progress,
     )
 
@@ -335,6 +337,8 @@ def extract_factsheet(document_id: str, db: Session = Depends(get_db)):
         )
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except RateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc))
     except ExtractionError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
@@ -464,11 +468,11 @@ def generate_draft(
         draft = draft_generation_service.generate_draft(
             db, document_id=document_id, tone=payload.tone
         )
-    except NotFoundError as exc:
+    except (NotFoundError, NoFactSheetError) as exc:
         raise HTTPException(status_code=404, detail=str(exc))
-    except NoFactSheetError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
-    except anthropic.APITimeoutError:
+    except RateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc))
+    except (anthropic.APITimeoutError, openai.APITimeoutError):
         raise HTTPException(
             status_code=504,
             detail=(
@@ -476,40 +480,12 @@ def generate_draft(
                 "Try again or increase llm_timeout_seconds in Admin → System Settings."
             ),
         )
-    except anthropic.RateLimitError:
-        raise HTTPException(
-            status_code=429,
-            detail="LLM rate limit exceeded during draft generation. Please wait a moment and try again.",
-        )
-    except anthropic.AuthenticationError:
-        raise HTTPException(
-            status_code=500,
-            detail="LLM authentication failed. Check the ANTHROPIC_API_KEY server configuration.",
-        )
-    except anthropic.APIError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"LLM API error during draft generation: {exc}",
-        )
-    except openai.APITimeoutError:
-        raise HTTPException(
-            status_code=504,
-            detail=(
-                "The LLM timed out while generating the draft. "
-                "Try again or increase llm_timeout_seconds in Admin → System Settings."
-            ),
-        )
-    except openai.RateLimitError as exc:
-        raise HTTPException(
-            status_code=429,
-            detail=f"LLM rate limit exceeded during draft generation: {exc}",
-        )
-    except openai.AuthenticationError:
+    except (anthropic.AuthenticationError, openai.AuthenticationError):
         raise HTTPException(
             status_code=500,
             detail="LLM authentication failed. Check your API key configuration in Admin → System Settings.",
         )
-    except openai.APIError as exc:
+    except (anthropic.APIError, openai.APIError) as exc:
         raise HTTPException(
             status_code=502,
             detail=f"LLM API error during draft generation: {exc}",
@@ -582,6 +558,7 @@ def _run_draft_generation_background(
         if document_id:
             doc = db.query(Document).filter(Document.id == document_id).first()
 
+        last_error: Optional[str] = None
         for attempt in range(1, max_attempts + 1):
             if doc is not None:
                 # Spread progress 10 → 70 across attempts so the bar advances
@@ -603,6 +580,9 @@ def _run_draft_generation_background(
                 )
                 # Draft committed successfully; auto-advance QA pipeline
                 if document_id:
+                    if doc is not None:
+                        doc.error_message = None # Clear any previous errors on success
+                        db.commit()
                     try:
                         qa_iteration_service.evaluate_and_iterate(
                             db,
@@ -617,39 +597,53 @@ def _run_draft_generation_background(
                         )
                 return  # success — exit the retry loop
 
-            except anthropic.APITimeoutError:
+            except (anthropic.APITimeoutError, openai.APITimeoutError, RateLimitError) as exc:
+                last_error = str(exc)
                 logger.warning(
-                    "Draft generation attempt %d/%d timed out: document_id=%s per_attempt_timeout=%.1fs",
+                    "Draft generation attempt %d/%d retryable failure (timeout or rate limit): document_id=%s error=%s",
                     attempt,
                     max_attempts,
                     document_id,
-                    per_attempt_timeout,
+                    last_error
                 )
+
+                # ── Ticket 2.4 / Epic 3 refinement: Stop retrying on permanent Quota failures ──
+                # If the error is a Quota Exceeded (Resource Exhausted), further retries
+                # will not help and only flood the logs/API. Transient 'Rate limit'
+                # errors still warrant a retry if attempts remain.
+                if "Quota exceeded" in last_error:
+                    logger.info("Stopping background retries due to permanent Quota Exceeded failure.")
+                    break
+
                 if attempt < max_attempts:
                     continue  # retry with the next attempt
 
             except Exception as exc:
+                last_error = str(exc)
                 logger.error(
                     "Draft generation attempt %d/%d failed: document_id=%s error_type=%s error=%s",
                     attempt,
                     max_attempts,
                     document_id,
                     type(exc).__name__,
-                    exc,
+                    last_error,
                 )
                 break  # non-retryable error; fall through to failure handling
 
         # All attempts exhausted or a non-retryable error occurred
         if doc is not None:
+            doc.status = DocumentStatus.BLOCKED
             doc.current_stage = "DRAFT_FAILED"
+            doc.error_message = last_error or "Draft generation failed after all attempts."
             doc.validation_progress = 0
             db.commit()
 
     except Exception as exc:
+        error_msg = str(exc)
         logger.error(
             "Background draft generation task crashed: document_id=%s error=%s",
             document_id,
-            exc,
+            error_msg,
         )
         # Best-effort: mark the document as failed so the UI unblocks
         try:
@@ -658,7 +652,9 @@ def _run_draft_generation_background(
                 try:
                     _doc = _db2.query(Document).filter(Document.id == document_id).first()
                     if _doc:
+                        _doc.status = DocumentStatus.BLOCKED
                         _doc.current_stage = "DRAFT_FAILED"
+                        _doc.error_message = error_msg
                         _doc.validation_progress = 0
                         _db2.commit()
                 finally:
@@ -779,6 +775,8 @@ def qa_iterate(
         )
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
+    except RateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc))
     except MaxIterationsReachedError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except InvalidRubricScoreError as exc:
@@ -790,7 +788,7 @@ def qa_iterate(
             status_code=500,
             detail="LLM returned invalid JSON during QA evaluation",
         )
-    except anthropic.APITimeoutError:
+    except (anthropic.APITimeoutError, openai.APITimeoutError):
         raise HTTPException(
             status_code=504,
             detail=(
@@ -798,40 +796,12 @@ def qa_iterate(
                 "Try again or increase llm_timeout_seconds in Admin → System Settings."
             ),
         )
-    except anthropic.RateLimitError:
-        raise HTTPException(
-            status_code=429,
-            detail="LLM rate limit exceeded during QA evaluation. Please wait a moment and try again.",
-        )
-    except anthropic.AuthenticationError:
-        raise HTTPException(
-            status_code=500,
-            detail="LLM authentication failed. Check the ANTHROPIC_API_KEY server configuration.",
-        )
-    except anthropic.APIError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"LLM API error during QA evaluation: {exc}",
-        )
-    except openai.APITimeoutError:
-        raise HTTPException(
-            status_code=504,
-            detail=(
-                "The QA evaluation timed out while waiting for the LLM. "
-                "Try again or increase llm_timeout_seconds in Admin → System Settings."
-            ),
-        )
-    except openai.RateLimitError as exc:
-        raise HTTPException(
-            status_code=429,
-            detail=f"LLM rate limit exceeded during QA evaluation: {exc}",
-        )
-    except openai.AuthenticationError:
+    except (anthropic.AuthenticationError, openai.AuthenticationError):
         raise HTTPException(
             status_code=500,
             detail="LLM authentication failed. Check your API key configuration in Admin → System Settings.",
         )
-    except openai.APIError as exc:
+    except (anthropic.APIError, openai.APIError) as exc:
         raise HTTPException(
             status_code=502,
             detail=f"LLM API error during QA evaluation: {exc}",

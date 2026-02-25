@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import anthropic
+import openai
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 from sqlalchemy.orm import Session
 
@@ -29,6 +30,7 @@ from app.services.settings_service import ActiveSettings
 from app.services.exceptions import (
     ExtractionError,
     NotFoundError,
+    RateLimitError,
     RegistryNotInitializedError,
     RegistryStaleError,
 )
@@ -288,13 +290,24 @@ Return the JSON object now."""
 
 
 def _is_retryable_error(exc: BaseException) -> bool:
-    """Return True for transient Anthropic errors that warrant an automatic retry."""
-    if isinstance(exc, anthropic.RateLimitError):
-        return True
+    """Return True for transient errors that warrant an automatic retry.
+
+    Covers both Anthropic and OpenAI (Google/xAI/Perplexity) SDKs.
+    RateLimitError is excluded to avoid excessive looping; retries for 429
+    are handled at the orchestrator level where appropriate.
+    """
+    # Anthropic SDK
     if isinstance(exc, anthropic.APIStatusError) and exc.status_code >= 500:
         return True
     if isinstance(exc, anthropic.APITimeoutError):
         return True
+
+    # OpenAI SDK (and providers using the OpenAI-compatible adapter)
+    if isinstance(exc, openai.APIStatusError) and exc.status_code >= 500:
+        return True
+    if isinstance(exc, openai.APITimeoutError):
+        return True
+
     return False
 
 
@@ -397,6 +410,10 @@ def extract_factsheet(db: Session, document_id: str) -> FactSheet:
             model_name=active.llm_model_name,
             settings_snapshot=active,
         )
+    except (anthropic.RateLimitError, openai.RateLimitError) as exc:
+        reason = llm_adapter.clean_llm_error(exc)
+        logger.error("LLM rate limit / quota exceeded: document_id=%s error=%s", document_id, exc)
+        raise RateLimitError(f"LLM rate Limit Exceeded: {reason}") from exc
     except Exception as exc:
         logger.error("LLM call failed: document_id=%s error=%s", document_id, exc)
         raise ExtractionError(f"LLM extraction failed: {exc}") from exc

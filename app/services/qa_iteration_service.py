@@ -48,6 +48,7 @@ from app.services.exceptions import (
     LLMInvalidJSONError,
     MaxIterationsReachedError,
     NotFoundError,
+    RateLimitError,
 )
 
 logger = logging.getLogger(__name__)
@@ -61,11 +62,13 @@ def _is_retryable_error(exc: BaseException) -> bool:
     """Return True for transient LLM provider errors that warrant an automatic retry.
 
     Covers both Anthropic and OpenAI-compatible providers (Gemini, xAI, Perplexity).
+
+    RateLimitError (429) is excluded from tenacity retries to prevent nested
+    retry storms.
+
     Timeouts are intentionally excluded: retrying a timed-out call would compound
     the delay (3 × timeout_seconds). Let timeouts surface immediately.
     """
-    if isinstance(exc, (anthropic.RateLimitError, openai.RateLimitError)):
-        return True
     if isinstance(exc, anthropic.APIStatusError) and exc.status_code >= 500:
         return True
     if isinstance(exc, openai.APIStatusError) and exc.status_code >= 500:
@@ -621,6 +624,10 @@ def evaluate_draft(
     # ── Call LLM (no DB mutations yet — fails fast) ────────────────────────
     try:
         raw_scores = _call_llm_evaluate(draft.content_markdown, fact_sheet_data, qa_model, active, timeout_seconds)
+    except (anthropic.RateLimitError, openai.RateLimitError) as exc:
+        reason = llm_adapter.clean_llm_error(exc)
+        logger.error("LLM rate limit / quota exceeded: draft_id=%s error=%s", draft_id, exc)
+        raise RateLimitError(f"LLM rate Limit Exceeded: {reason}") from exc
     except Exception as exc:
         logger.error("LLM evaluation failed: draft_id=%s error=%s", draft_id, exc)
         raise
@@ -745,6 +752,10 @@ def improve_draft(
     # ── Call LLM (no DB mutations yet — fails fast) ────────────────────────
     try:
         new_content = _call_llm_improve(prompt, qa_model, active, timeout_seconds)
+    except (anthropic.RateLimitError, openai.RateLimitError) as exc:
+        reason = llm_adapter.clean_llm_error(exc)
+        logger.error("LLM rate limit / quota exceeded: draft_id=%s error=%s", draft_id, exc)
+        raise RateLimitError(f"LLM rate Limit Exceeded: {reason}") from exc
     except Exception as exc:
         logger.error("LLM improvement failed: draft_id=%s error=%s", draft_id, exc)
         raise
@@ -887,18 +898,24 @@ def evaluate_and_iterate(
     # Track scores and feedback across iterations for progressive improvement
     previous_scores: Optional[dict] = None
     cumulative_feedback: list[str] = []
+    iteration_count: int = 0
 
     # ── 6. QA Iteration Loop ──────────────────────────────────────────────
-    for iteration in range(1, effective_max + 1):
-        logger.info(
-            "QA iteration %d/%d: document_id=%s draft_id=%s",
-            iteration,
-            effective_max,
-            document_id,
-            current_draft.id,
-        )
+    try:
+        for iteration in range(1, effective_max + 1):
+            logger.info(
+                "QA iteration %d/%d: document_id=%s draft_id=%s",
+                iteration,
+                effective_max,
+                document_id,
+                current_draft.id,
+            )
 
-        try:
+            # Update current stage for polling
+            doc.current_stage = f"QA_ITERATION_{iteration}_EVALUATING"
+            doc.validation_progress = int(25 + ((iteration - 0.5) / effective_max) * 25)
+            db.commit()
+
             # ── Evaluate (LLM call first — no DB mutations until it succeeds) ──
             scores = evaluate_draft(db, current_draft.id, fact_sheet_data, qa_model, timeout_seconds)
 
@@ -1051,6 +1068,11 @@ def evaluate_and_iterate(
             # on the final iteration. Score and audit log are committed here.
             if iteration >= effective_max:
                 doc.status = DocumentStatus.BLOCKED
+                doc.current_stage = "QA_BLOCKED"
+                doc.error_message = (
+                    f"Draft failed to reach passing threshold ({qa_threshold:.1f}) "
+                    f"after {effective_max} iterations. Final score: {scores.composite_score:.2f}."
+                )
                 db.commit()
                 logger.info(
                     "QA BLOCKED: document_id=%s score=%.2f after %d/%d iterations",
@@ -1060,16 +1082,16 @@ def evaluate_and_iterate(
                     effective_max,
                 )
                 raise MaxIterationsReachedError(
-                    f"Document {document_id} did not pass QA after {effective_max} "
-                    f"iteration(s). Final score: {scores.composite_score:.2f} "
-                    f"(threshold: {qa_threshold})."
+                    f"Draft failed to pass after {effective_max} iteration(s). "
+                    f"Final score: {scores.composite_score:.2f} (Target: {qa_threshold})."
                 )
 
             # ── Update pipeline progress for this intermediate iteration ────
             # Interpolate validation_progress between 25 (draft generated) and
             # 50 (QA completed) so the UI progress bar advances each iteration.
-            doc.current_stage = f"QA_ITERATION_{iteration}"
+            doc.current_stage = f"QA_ITERATION_{iteration}_IMPROVING"
             doc.validation_progress = int(25 + (iteration / effective_max) * 25)
+            db.commit()
 
             # ── Improve (only when more iterations remain) ──────────────────
             new_draft = improve_draft(
@@ -1095,20 +1117,26 @@ def evaluate_and_iterate(
             previous_scores = current_scores
             current_draft = new_draft
 
-        except MaxIterationsReachedError:
-            # Status already committed as BLOCKED — propagate without rollback.
-            raise
-        except Exception as exc:
-            # LLM failures, DB errors, InvalidRubricScoreError, NotFoundError, etc.
-            # Roll back all in-session mutations for this iteration and re-raise.
-            db.rollback()
-            logger.error(
-                "QA iteration %d failed: document_id=%s error=%s",
-                iteration,
-                document_id,
-                exc,
-            )
-            raise
+    except MaxIterationsReachedError:
+        # Status already committed as BLOCKED — propagate without rollback.
+        raise
+    except Exception as exc:
+        # LLM failures, DB errors, InvalidRubricScoreError, NotFoundError, etc.
+        # Transition to BLOCKED so it doesn't get stuck in VALIDATING.
+        doc.status = DocumentStatus.BLOCKED
+        doc.current_stage = "QA_FAILED"
+        doc.error_message = str(exc)
+        db.commit()
+
+        # Roll back all in-session mutations for this iteration and re-raise.
+        db.rollback()
+        logger.error(
+            "QA iteration %d failed: document_id=%s error=%s",
+            iteration_count,
+            document_id,
+            exc,
+        )
+        raise
 
     # The loop always returns or raises — this line is unreachable.
     raise RuntimeError(  # pragma: no cover

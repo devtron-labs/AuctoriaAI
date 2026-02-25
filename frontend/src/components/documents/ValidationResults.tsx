@@ -139,12 +139,12 @@ function ClaimRow({
           {result.error_message && (
             <div className="flex gap-2">
               <span className="text-muted-foreground w-24 shrink-0">Error</span>
-              <span className="text-red-600">{result.error_message}</span>
+              <span className="text-red-600 break-all">{result.error_message}</span>
             </div>
           )}
           <div className="pt-1">
             <p className="text-xs text-muted-foreground mb-1">Full claim text</p>
-            <p className="text-sm leading-relaxed">{result.claim.claim_text}</p>
+            <p className="text-sm leading-relaxed break-words">{result.claim.claim_text}</p>
           </div>
         </div>
       )}

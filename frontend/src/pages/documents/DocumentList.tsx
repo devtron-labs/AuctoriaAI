@@ -199,10 +199,15 @@ export default function DocumentList() {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <div className="flex flex-col gap-1 text-xs text-gray-500">
+                  <div className="flex flex-col gap-1 text-xs text-gray-500 mb-2">
                     <span>Created {formatDate(doc.created_at)}</span>
                     <span>Updated {formatDate(doc.updated_at)}</span>
                   </div>
+                  {doc.status === 'VALIDATING' && doc.current_stage === 'DRAFT_FAILED' && doc.error_message && (
+                    <div className="mt-2 rounded bg-red-50 p-2 text-[10px] text-red-700 border border-red-100 line-clamp-2 break-all" title={doc.error_message}>
+                      {doc.error_message}
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </Link>

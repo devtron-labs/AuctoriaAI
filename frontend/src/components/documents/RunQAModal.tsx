@@ -20,6 +20,7 @@ interface RunQAModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess?: (result: QAIterationResult) => void;
+  onClose?: (hasError: boolean) => void;
 }
 
 type ProgressPhase = 'Evaluating' | 'Improving' | 'Finalizing';
@@ -29,6 +30,7 @@ export default function RunQAModal({
   open,
   onOpenChange,
   onSuccess,
+  onClose,
 }: RunQAModalProps) {
   const [maxIterations, setMaxIterations] = useState(3);
   const [simulatedIteration, setSimulatedIteration] = useState(1);
@@ -94,7 +96,9 @@ export default function RunQAModal({
   };
 
   const handleClose = () => {
+    const hasError = !!error || (isSuccess && data?.final_status === 'BLOCKED');
     onOpenChange(false);
+    onClose?.(hasError);
     // Reset state after dialog close animation
     setTimeout(() => {
       reset();
@@ -186,7 +190,9 @@ export default function RunQAModal({
             {apiError && (
               <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>{apiError}</span>
+                <div className="flex-1 min-w-0 break-all">
+                  {apiError}
+                </div>
               </div>
             )}
 

@@ -142,6 +142,7 @@ class DocumentRead(BaseModel):
     title: str
     status: DocumentStatus
     current_stage: Optional[str] = None
+    error_message: Optional[str] = None
     validation_progress: int = 0
     draft_versions: List["DraftVersionRead"] = []
     has_fact_sheet: bool = False
@@ -160,6 +161,7 @@ class DocumentStatusResponse(BaseModel):
 
     status: DocumentStatus
     current_stage: Optional[str]
+    error_message: Optional[str] = None
     validation_progress: int
 
 

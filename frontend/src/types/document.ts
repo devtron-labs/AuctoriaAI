@@ -136,6 +136,7 @@ export interface DraftGenerateResponse {
 export interface DocumentStatusResponse {
   status: DocumentStatus;
   current_stage: string | null;
+  error_message: string | null;
   validation_progress: number;
 }
 

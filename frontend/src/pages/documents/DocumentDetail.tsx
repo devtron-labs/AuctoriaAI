@@ -43,60 +43,106 @@ const STATUS_LABELS: Record<DocumentStatus, string> = {
   BLOCKED: 'Blocked',
 };
 
-function StatusTimeline({ current }: { current: DocumentStatus }) {
-  if (current === 'BLOCKED') {
-    return (
-      <div className="flex items-center gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-        <AlertCircle className="h-4 w-4" />
-        This document has been <strong>blocked</strong> and requires intervention before proceeding.
-      </div>
-    );
-  }
+function StatusTimeline({ document }: { document: Document }) {
+  const current = document.status;
 
   const currentIdx = STATUS_STEPS.indexOf(current);
 
-  return (
-    <div className="flex items-center gap-0 w-full overflow-x-auto">
-      {STATUS_STEPS.map((step, idx) => {
-        const isPast = idx < currentIdx;
-        const isCurrent = idx === currentIdx;
+  // ─── Helper: Render failure details ───
+  const renderFailure = () => {
+    if (document.status !== 'BLOCKED' && document.current_stage !== 'DRAFT_FAILED' && document.current_stage !== 'QA_FAILED') {
+      return null;
+    }
 
-        return (
-          <div key={step} className="flex items-center flex-1 min-w-0">
-            <div className="flex flex-col items-center flex-1 min-w-0">
-              <div
-                className={`h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-colors ${
-                  isPast
-                    ? 'bg-primary border-primary text-primary-foreground'
-                    : isCurrent
-                      ? 'bg-primary/10 border-primary text-primary'
-                      : 'bg-background border-muted-foreground/30 text-muted-foreground'
-                }`}
-              >
-                {isPast ? '✓' : idx + 1}
-              </div>
-              <span
-                className={`mt-1.5 text-xs text-center whitespace-nowrap ${
-                  isCurrent
-                    ? 'font-semibold text-primary'
-                    : isPast
-                      ? 'text-foreground'
-                      : 'text-muted-foreground'
-                }`}
-              >
-                {STATUS_LABELS[step]}
-              </span>
-            </div>
-            {idx < STATUS_STEPS.length - 1 && (
-              <div
-                className={`h-0.5 flex-1 mx-1 transition-colors ${
-                  idx < currentIdx ? 'bg-primary' : 'bg-muted-foreground/20'
-                }`}
-              />
-            )}
+    const isRateLimit = document.error_message?.toLowerCase().includes('rate limit') || 
+                        document.error_message?.toLowerCase().includes('quota');
+    
+    let title = 'Process Blocked';
+    let suggestion = 'Please check the logs or contact an administrator.';
+
+    if (document.current_stage === 'DRAFT_FAILED') {
+      title = 'Draft Generation Failed';
+      suggestion = isRateLimit 
+        ? 'The AI provider is currently rate-limited. Please wait a few minutes and try again.'
+        : 'An error occurred during generation. Try adjusting your prompt or checking API configuration.';
+    } else if (document.current_stage === 'QA_FAILED') {
+      title = 'QA Evaluation Failed';
+      suggestion = isRateLimit
+        ? 'The AI provider is currently rate-limited. Please wait a few minutes and try again.'
+        : 'An error occurred during the QA process. Check your system settings and API keys.';
+    } else if (document.current_stage === 'QA_BLOCKED') {
+      title = 'QA Quality Gate Blocked';
+      suggestion = 'The draft could not reach the required passing threshold within the iteration limit. You may need to manually improve the draft or adjust the threshold.';
+    } else if (document.status === 'BLOCKED' && !document.current_stage?.includes('FAILED')) {
+      title = 'Governance Gate Blocked';
+      suggestion = 'This document failed claim validation or governance checks. Review the "Drafts" tab for specific violations.';
+    }
+
+    return (
+      <div className="flex items-start gap-3 rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700 mt-4">
+        <AlertCircle className="mt-0.5 h-5 w-5 shrink-0" />
+        <div className="space-y-2 flex-1 min-w-0">
+          <div>
+            <p className="font-bold text-base leading-none mb-1">{title}</p>
+            <p className="text-xs opacity-90 break-all font-mono bg-red-100/50 p-2 rounded mt-2 border border-red-200">
+              {document.error_message || 'No specific error message provided.'}
+            </p>
           </div>
-        );
-      })}
+          <div className="pt-1 text-red-800">
+            <p className="font-semibold text-xs uppercase tracking-wider mb-1 opacity-70">Suggested Action</p>
+            <p>{suggestion}</p>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center gap-0 w-full overflow-x-auto pb-2">
+        {STATUS_STEPS.map((step, idx) => {
+          const isPast = idx < currentIdx;
+          const isCurrent = idx === currentIdx;
+
+          return (
+            <div key={step} className="flex items-center flex-1 min-w-0">
+              <div className="flex flex-col items-center flex-1 min-w-0">
+                <div
+                  className={`h-8 w-8 rounded-full flex items-center justify-center text-xs font-bold border-2 transition-colors ${
+                    isPast
+                      ? 'bg-primary border-primary text-primary-foreground'
+                      : isCurrent
+                        ? 'bg-primary/10 border-primary text-primary'
+                        : 'bg-background border-muted-foreground/30 text-muted-foreground'
+                  }`}
+                >
+                  {isPast ? '✓' : idx + 1}
+                </div>
+                <span
+                  className={`mt-1.5 text-xs text-center whitespace-nowrap ${
+                    isCurrent
+                      ? 'font-semibold text-primary'
+                      : isPast
+                        ? 'text-foreground'
+                        : 'text-muted-foreground'
+                  }`}
+                >
+                  {STATUS_LABELS[step]}
+                </span>
+              </div>
+              {idx < STATUS_STEPS.length - 1 && (
+                <div
+                  className={`h-0.5 flex-1 mx-1 transition-colors ${
+                    idx < currentIdx ? 'bg-primary' : 'bg-muted-foreground/20'
+                  }`}
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {renderFailure()}
     </div>
   );
 }
@@ -199,7 +245,7 @@ function OverviewTab({ document, onSwitchTab }: OverviewTabProps) {
           <CardDescription>Current position in the document processing pipeline.</CardDescription>
         </CardHeader>
         <CardContent>
-          <StatusTimeline current={document.status} />
+          <StatusTimeline document={document} />
         </CardContent>
       </Card>
 
@@ -263,9 +309,11 @@ function HistoryTab({ documentId }: { documentId: string }) {
           </div>
         ) : error ? (
           <div className="space-y-3">
-            <div className="flex items-center gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-              <AlertCircle className="h-4 w-4 shrink-0" />
-              Failed to load audit logs.
+            <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0 break-all">
+                Failed to load audit logs.
+              </div>
             </div>
             <Button variant="outline" size="sm" onClick={() => void refetch()}>
               Retry
@@ -371,7 +419,7 @@ export default function DocumentDetail() {
         </TabsContent>
 
         <TabsContent value="drafts" className="mt-4">
-          <DraftsTabComponent documentId={id!} />
+          <DraftsTabComponent documentId={id!} onSwitchTab={setActiveTab} />
         </TabsContent>
 
         <TabsContent value="history" className="mt-4">

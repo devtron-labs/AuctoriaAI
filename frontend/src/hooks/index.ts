@@ -244,7 +244,9 @@ export function useGenerateDraft(id: string) {
       void queryClient.invalidateQueries({ queryKey: queryKeys.documents.detail(id) });
     } else if (current_stage === 'DRAFT_FAILED') {
       setIsPolling(false);
-      setPollError(new Error('Draft generation failed after all attempts. Please try again.'));
+      const msg = statusQuery.data.error_message || 'Draft generation failed after all attempts. Please try again.';
+      setPollError(new Error(msg));
+      void queryClient.invalidateQueries({ queryKey: queryKeys.documents.detail(id) });
     }
   }, [isPolling, statusQuery.data, id, queryClient]);
 

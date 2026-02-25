@@ -23,9 +23,10 @@ import type { ValidationReport, QAIterationResult, GovernanceCheckResult } from 
 
 interface DraftsTabProps {
   documentId: string;
+  onSwitchTab?: (tab: string) => void;
 }
 
-export default function DraftsTab({ documentId }: DraftsTabProps) {
+export default function DraftsTab({ documentId, onSwitchTab }: DraftsTabProps) {
   const [showGenerateModal, setShowGenerateModal] = useState(false);
   const [showQAModal, setShowQAModal] = useState(false);
   const [selectedDraftId, setSelectedDraftId] = useState<string | null>(null);
@@ -185,9 +186,11 @@ export default function DraftsTab({ documentId }: DraftsTabProps) {
 
       {/* Validate error */}
       {validateApiError && (
-        <div className="flex items-center gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
-          <AlertCircle className="h-4 w-4 shrink-0" />
-          {validateApiError}
+        <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0 break-all">
+            {validateApiError}
+          </div>
         </div>
       )}
 
@@ -304,7 +307,9 @@ export default function DraftsTab({ documentId }: DraftsTabProps) {
                     <CardContent className="pt-0">
                       <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                         <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                        <span>{governanceApiError}</span>
+                        <div className="flex-1 min-w-0 break-all">
+                          {governanceApiError}
+                        </div>
                       </div>
                     </CardContent>
                   )}
@@ -326,6 +331,11 @@ export default function DraftsTab({ documentId }: DraftsTabProps) {
         documentId={documentId}
         open={showGenerateModal}
         onOpenChange={setShowGenerateModal}
+        onClose={(hasError) => {
+          if (hasError && onSwitchTab) {
+            onSwitchTab('overview');
+          }
+        }}
       />
 
       {/* QA iteration modal */}
@@ -334,6 +344,11 @@ export default function DraftsTab({ documentId }: DraftsTabProps) {
         open={showQAModal}
         onOpenChange={setShowQAModal}
         onSuccess={(result) => setQAResult(result)}
+        onClose={(hasError) => {
+          if (hasError && onSwitchTab) {
+            onSwitchTab('overview');
+          }
+        }}
       />
     </div>
   );
