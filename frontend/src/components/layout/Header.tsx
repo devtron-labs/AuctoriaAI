@@ -49,7 +49,7 @@ export default function Header() {
               to="/"
               className="text-xl font-bold text-primary focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 rounded"
             >
-              VeritasAI
+              AuctoriaAI
             </Link>
 
             {/* Desktop nav — hidden on mobile */}
