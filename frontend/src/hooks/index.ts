@@ -14,7 +14,7 @@ import {
   downloadDraftDocx,
 } from '@/services/documents';
 import { getReviewDetails } from '@/services/review';
-import { getClaims, createClaim, updateClaim, deleteClaim } from '@/services/claims';
+import { getClaims, createClaim, updateClaim, deleteClaim, syncRegistry } from '@/services/claims';
 import { getAvailableModels, getSettings, updateSettings, testWebhook } from '@/services/settings';
 import { queryKeys } from '@/lib/queryKeys';
 import type {
@@ -436,6 +436,16 @@ export function useDeleteClaim() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => deleteClaim(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.claims.all });
+    },
+  });
+}
+
+export function useSyncRegistry() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: syncRegistry,
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.claims.all });
     },

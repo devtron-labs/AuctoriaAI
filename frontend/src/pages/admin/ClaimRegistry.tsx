@@ -1,12 +1,12 @@
 import { useState, useMemo } from 'react';
-import { Search, Plus, Pencil, Trash2, ChevronUp, ChevronDown } from 'lucide-react';
+import { Search, Plus, Pencil, Trash2, ChevronUp, ChevronDown, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
 import AddClaimModal from '@/components/admin/AddClaimModal';
 import EditClaimModal from '@/components/admin/EditClaimModal';
-import { useClaims, useCreateClaim, useUpdateClaim, useDeleteClaim } from '@/hooks';
+import { useClaims, useCreateClaim, useUpdateClaim, useDeleteClaim, useSyncRegistry } from '@/hooks';
 import { useToast } from '@/providers/ToastProvider';
 import { formatDate } from '@/lib/utils';
 import { cn } from '@/lib/utils';
@@ -68,6 +68,7 @@ export default function ClaimRegistry() {
   const createClaim = useCreateClaim();
   const updateClaim = useUpdateClaim();
   const deleteClaim = useDeleteClaim();
+  const syncRegistry = useSyncRegistry();
 
   const [filter, setFilter] = useState<FilterTab>('ALL');
   const [search, setSearch] = useState('');
@@ -83,6 +84,15 @@ export default function ClaimRegistry() {
       setSortField(field);
       setSortDir('asc');
     }
+  };
+
+  const handleSync = () => {
+    syncRegistry.mutate(undefined, {
+      onSuccess: (data) => {
+        toast(`Registry synced: ${data.registry_count} claims`, 'success');
+      },
+      onError: () => toast('Failed to sync registry', 'error'),
+    });
   };
 
   const filteredClaims = useMemo(() => {
@@ -172,10 +182,22 @@ export default function ClaimRegistry() {
             className="pl-9"
           />
         </div>
-        <Button size="sm" onClick={() => setAddModalOpen(true)}>
-          <Plus className="h-4 w-4 mr-1" />
-          Add Claim
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleSync}
+            disabled={syncRegistry.isPending}
+            className="gap-2"
+          >
+            <RefreshCw className={cn('h-4 w-4', syncRegistry.isPending && 'animate-spin')} />
+            Sync Registry
+          </Button>
+          <Button size="sm" onClick={() => setAddModalOpen(true)}>
+            <Plus className="h-4 w-4 mr-1" />
+            Add Claim
+          </Button>
+        </div>
       </div>
 
       {/* Filter tabs */}
@@ -261,8 +283,34 @@ export default function ClaimRegistry() {
             <tbody className="divide-y divide-gray-100 bg-white">
               {filteredClaims.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-10 text-center text-gray-400 text-sm">
-                    {search || filter !== 'ALL' ? 'No claims match your filter.' : 'No claims yet. Add your first claim.'}
+                  <td colSpan={5} className="px-4 py-16 text-center">
+                    <div className="flex flex-col items-center justify-center gap-3">
+                      <RefreshCw className="h-10 w-10 text-gray-200" />
+                      <div className="space-y-1">
+                        <p className="text-gray-900 font-medium">No claims found</p>
+                        <p className="text-gray-500 text-sm max-w-xs mx-auto">
+                          {search || filter !== 'ALL'
+                            ? 'Try adjusting your filters or search query.'
+                            : 'The claim registry is empty. Sync with bootstrap data to get started.'}
+                        </p>
+                      </div>
+                      {!search && filter === 'ALL' && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleSync}
+                          disabled={syncRegistry.isPending}
+                          className="mt-2"
+                        >
+                          {syncRegistry.isPending ? (
+                            <RefreshCw className="h-4 w-4 animate-spin mr-2" />
+                          ) : (
+                            <RefreshCw className="h-4 w-4 mr-2" />
+                          )}
+                          Sync Bootstrap Claims
+                        </Button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ) : (

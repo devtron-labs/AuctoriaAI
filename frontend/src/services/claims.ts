@@ -16,3 +16,10 @@ export function updateClaim(id: string, data: UpdateClaimRequest): Promise<Claim
 export function deleteClaim(id: string): Promise<void> {
   return apiRequest<void>({ method: 'DELETE', url: `/claims/${id}` });
 }
+
+export function syncRegistry(): Promise<{ registry_count: number; seeded: boolean; updated_at: string }> {
+  return apiRequest<{ registry_count: number; seeded: boolean; updated_at: string }>({
+    method: 'POST',
+    url: '/registry/sync',
+  });
+}
