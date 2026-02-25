@@ -2,10 +2,20 @@
 
 AuctoriaAI is a full-stack governance platform that enforces quality, accuracy, and compliance for AI-generated documents. It implements a structured multi-stage pipeline where every document travels through automated fact extraction, LLM-powered draft generation, rubric-based QA evaluation, claim validation, and human review — all with full audit trails.
 
+## Recent Updates
+
+**Multi-Provider LLM Support** (February 2026)
+- Added support for multiple LLM providers: Anthropic, OpenAI, Google AI, xAI, and Perplexity
+- New `llm_adapter.py` service automatically routes requests to the correct provider based on model name
+- Runtime-configurable API keys for all providers via Admin Settings
+- Model selection now includes GPT-4, Gemini, Grok, and other models alongside Claude
+- Backwards compatible: Anthropic `ANTHROPIC_API_KEY` environment variable still supported
+
 ---
 
 ## Table of Contents
 
+- [Recent Updates](#recent-updates)
 1. [Problem Statement](#1-problem-statement)
 2. [High-Level Architecture](#2-high-level-architecture)
 3. [Document Lifecycle Pipeline](#3-document-lifecycle-pipeline)
@@ -64,10 +74,10 @@ AuctoriaAI solves this with an automated pipeline: documents are factually groun
 │                                             │                       │
 │          ┌──────────────────────────────────┤                       │
 │          │                                  │                       │
-│  ┌───────▼──────┐                 ┌─────────▼──────────┐           │
-│  │  PostgreSQL  │                 │  Anthropic Claude  │           │
-│  │  (SQLAlchemy)│                 │  claude-opus-4-6   │           │
-│  │  Alembic     │                 │  claude-sonnet-4-6 │           │
+│  ├───────▼──────┐                 ┌─────────▼──────────┐           │
+│  │  PostgreSQL  │                 │  Multi-Provider LLMs│           │
+│  │  (SQLAlchemy)│                 │  Anthropic, OpenAI │           │
+│  │  Alembic     │                 │  Google, xAI, etc. │           │
 │  └──────────────┘                 └────────────────────┘           │
 │                                                                     │
 │  ┌──────────────┐    ┌─────────────────┐                           │
@@ -146,7 +156,8 @@ APPROVED BLOCKED
 | ORM             | SQLAlchemy (sync sessions)          |
 | Migrations      | Alembic                             |
 | Database        | PostgreSQL                          |
-| LLM             | Anthropic Claude API                |
+| LLM Providers   | Anthropic, OpenAI, Google, xAI, Perplexity |
+| LLM SDKs        | anthropic, openai                   |
 | PDF export      | ReportLab                           |
 | DOCX export     | python-docx                         |
 | Retry logic     | Tenacity (exponential backoff)      |
@@ -166,12 +177,27 @@ APPROVED BLOCKED
 | Charts          | Recharts                            |
 | Icons           | Lucide React                        |
 
-### AI Models
+### AI Models & Multi-Provider Support
+
+AuctoriaAI supports multiple LLM providers through a unified adapter layer:
+
+| Provider    | Models                          | Integration                              |
+|-------------|---------------------------------|------------------------------------------|
+| Anthropic   | claude-opus-4-6, claude-sonnet-4-6, etc. | Native Anthropic SDK                     |
+| OpenAI      | gpt-4o, gpt-4, o1, o3, etc.     | OpenAI SDK                               |
+| Google      | gemini-*, gemini-pro, etc.      | OpenAI-compatible endpoint               |
+| xAI         | grok-*, etc.                    | OpenAI-compatible endpoint               |
+| Perplexity  | sonar-*, etc.                   | OpenAI-compatible endpoint               |
+
+**Default Configuration:**
+
 | Role              | Model              | Usage                                         |
 |-------------------|--------------------|-----------------------------------------------|
 | Draft Generation  | claude-opus-4-6    | Fact-grounded whitepaper generation           |
 | QA Evaluation     | claude-sonnet-4-6  | Rubric-based evaluation and iterative feedback|
 | Fact Extraction   | claude-opus-4-6    | Structured JSON fact extraction from uploads  |
+
+All models are configurable at runtime via Admin Settings. The system automatically detects the provider from the model name prefix and routes requests to the appropriate SDK.
 
 ---
 
@@ -209,6 +235,7 @@ AuctoriaAI/
 │   │   ├── settings_service.py           # Admin settings with in-memory cache
 │   │   ├── audit_service.py              # Read-only audit log access
 │   │   ├── claim_service.py              # Claim registry CRUD
+│   │   ├── llm_adapter.py                # Multi-provider LLM adapter (routes to correct SDK)
 │   │   └── exceptions.py                 # Custom exception classes
 │   │
 │   └── tests/                            # Pytest test suite (one file per epic)
@@ -242,7 +269,7 @@ AuctoriaAI/
 │   └── package.json
 │
 ├── alembic/                              # Database migration management
-│   ├── versions/                         # 11 migration files
+│   ├── versions/                         # 14 migration files
 │   └── alembic.ini
 │
 ├── storage/                              # Uploaded files (gitignored in production)
@@ -338,8 +365,13 @@ Single-row admin-configurable system parameters.
 | `qa_passing_threshold`      | Float    | 9.0                  | Minimum QA score to proceed                  |
 | `governance_score_threshold`| Float    | 9.0                  | Minimum governance score to pass gate        |
 | `max_qa_iterations`         | Integer  | 3                    | Max LLM QA/improvement cycles                |
-| `llm_timeout_seconds`       | Integer  | 120                  | Anthropic API call timeout                   |
+| `llm_timeout_seconds`       | Integer  | 120                  | LLM API call timeout                         |
 | `notification_webhook_url`  | String   | ""                   | Webhook URL for approval/rejection events    |
+| `anthropic_api_key`         | String   | NULL                 | Anthropic API key (falls back to env var)    |
+| `openai_api_key`            | String   | NULL                 | OpenAI API key                               |
+| `google_api_key`            | String   | NULL                 | Google AI API key                            |
+| `perplexity_api_key`        | String   | NULL                 | Perplexity API key                           |
+| `xai_api_key`               | String   | NULL                 | xAI API key                                  |
 | `updated_by`                | String   | —                    | Who last changed settings                    |
 | `updated_at`                | DateTime | —                    | When settings were last changed              |
 
@@ -535,6 +567,13 @@ else:
 - Rate-limited: 5 updates per rolling hour per admin
 - **Production note**: Multi-worker deployments need Redis or shared cache
 
+### `llm_adapter.py`
+- **Multi-provider routing**: Automatically detects provider from model name prefix (e.g., `claude-*` → Anthropic, `gpt-*` → OpenAI, `gemini-*` → Google)
+- **Unified interface**: Single `call_llm()` function works with all providers
+- **Provider SDKs**: Uses native Anthropic SDK for Claude; OpenAI SDK (or OpenAI-compatible endpoints) for OpenAI, Google, xAI, and Perplexity
+- **API key management**: Retrieves keys from `SystemSettings` database; falls back to `ANTHROPIC_API_KEY` environment variable for Anthropic
+- **Configurable base URLs**: Each provider has a configured API endpoint for OpenAI-compatible routing
+
 ---
 
 ## 9. Governance Gates & Safety Mechanisms
@@ -612,13 +651,29 @@ notification_webhook_url  = ""             # empty = disabled
 
 All defaults are overridable at runtime via the Admin Settings API without a server restart.
 
-### Anthropic API Key
+### LLM API Keys
 
-The Anthropic client reads `ANTHROPIC_API_KEY` from environment. Set it in your shell or `.env`:
+#### Environment Variables (Legacy)
+The system supports environment variable fallback for Anthropic:
 
 ```env
 ANTHROPIC_API_KEY=sk-ant-...
 ```
+
+#### Database Configuration (Recommended)
+API keys for all providers can be configured at runtime via Admin Settings (no restart required):
+
+- **Anthropic**: Falls back to `ANTHROPIC_API_KEY` environment variable if not set in DB
+- **OpenAI**: Must be configured in Admin Settings
+- **Google AI**: Must be configured in Admin Settings
+- **Perplexity**: Must be configured in Admin Settings
+- **xAI**: Must be configured in Admin Settings
+
+To configure API keys:
+1. Navigate to Admin → System Settings in the frontend
+2. Enter API keys in the "API Keys" section
+3. Select desired models for draft generation and QA evaluation
+4. Save settings (no server restart required)
 
 ---
 
@@ -671,7 +726,7 @@ services/
 - Python 3.10+
 - PostgreSQL 14+
 - Node.js 18+
-- Anthropic API key
+- At least one LLM provider API key (Anthropic, OpenAI, Google AI, xAI, or Perplexity)
 
 ### Backend Setup
 
@@ -690,8 +745,9 @@ pip install -r requirements.txt
 cp .env.example .env
 # Edit .env: set DATABASE_URL and ENV=local
 
-# Export Anthropic API key
+# Export LLM API key (for Anthropic - optional if configured in Admin Settings)
 export ANTHROPIC_API_KEY=sk-ant-...
+# OR configure API keys via Admin Settings after startup
 
 # Run database migrations
 python -m alembic upgrade head
@@ -750,7 +806,7 @@ python -m alembic downgrade base
 ```
 
 ### Migration History Summary
-11 migrations covering:
+14 migrations covering:
 1. Initial schema (Document, DraftVersion, FactSheet)
 2. UUID type fixes
 3. Upload metadata fields (file_hash, file_size, mime_type, classification)
@@ -760,8 +816,11 @@ python -m alembic downgrade base
 7. Review metadata (reviewed_by, reviewed_at, review_notes)
 8. Tone field on DraftVersion
 9. SystemSettings table
-10. Prompt-first draft support (source_document_id, user_prompt)
-11. Force-approve fields
+10. SystemSettings ID type fix
+11. Prompt-first draft support (source_document_id, user_prompt)
+12. Pipeline progress tracking columns
+13. LLM timeout configuration
+14. Multi-provider API key support (anthropic, openai, google, perplexity, xai)
 
 ---
 
@@ -824,8 +883,11 @@ Frontend tests use **Mock Service Worker (MSW)** to intercept API calls without 
 ```env
 DATABASE_URL=postgresql://user:password@db-host:5432/veritas_ai
 ENV=production
+# Optional: Legacy environment variable for Anthropic (can be configured in Admin Settings instead)
 ANTHROPIC_API_KEY=sk-ant-...
 ```
+
+**Recommended**: Configure all LLM provider API keys via Admin Settings UI rather than environment variables for easier key rotation and multi-provider management.
 
 ### Important Production Notes
 
@@ -856,15 +918,17 @@ Shared volume or S3 for file storage
     ↓
 Redis (for settings cache in multi-worker)
     ↓
-Anthropic Claude API
+LLM Providers (Anthropic, OpenAI, Google, xAI, Perplexity)
 ```
 
 ---
 
 ## 16. Key Design Decisions
 
-### Why Claude for Both Generation and QA?
-Using separate Claude models (claude-opus-4-6 for generation, claude-sonnet-4-6 for evaluation) provides a balance: the most capable model generates the best output, while the faster/cheaper model handles high-volume iterative scoring without significantly sacrificing evaluation quality.
+### Why Multi-Provider LLM Support?
+AuctoriaAI supports multiple LLM providers (Anthropic, OpenAI, Google, Perplexity, xAI) to give organizations flexibility in model selection based on their specific needs, cost considerations, and provider preferences. The system uses a unified adapter layer (`llm_adapter.py`) that automatically routes requests to the appropriate SDK based on model name prefixes.
+
+By default, the system uses separate Claude models (claude-opus-4-6 for generation, claude-sonnet-4-6 for evaluation) to balance quality and cost: the most capable model generates the best output, while the faster/cheaper model handles high-volume iterative scoring without significantly sacrificing evaluation quality. However, any supported model from any provider can be configured for either role via Admin Settings.
 
 ### Why Regex-Based Claim Extraction (Not LLM)?
 Claim extraction uses regex patterns rather than an LLM call. This keeps validation deterministic, fast, and auditable. LLM-based extraction would add latency, cost, and non-determinism to what needs to be a reliable gate.
