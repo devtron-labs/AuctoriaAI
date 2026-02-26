@@ -13,6 +13,81 @@ YELLOW='\033[1;33m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
 
+# Helper: Check if command exists (moved up so the bootstrap preamble can use it)
+has_cmd() {
+    command -v "$1" >/dev/null 2>&1
+}
+
+# ---------------------------------------------------------------------------
+# Repo Bootstrap Preamble
+# Enables: curl -fsSL https://raw.githubusercontent.com/.../install.sh | bash
+# ---------------------------------------------------------------------------
+REPO_URL="https://github.com/devtron-labs/AuctoriaAI.git"
+CLONE_DIR="AuctoriaAI"
+
+# Strong fingerprint — avoids false positives from other Python projects
+is_inside_repo() {
+    [ -d ".git" ] && \
+    [ -f "requirements.txt" ] && \
+    [ -d "app" ] && \
+    [ -d "frontend" ] && \
+    [ -f "alembic.ini" ]
+}
+
+if is_inside_repo; then
+    echo -e "${GREEN}Running from inside the repository. Skipping clone.${NC}"
+else
+    echo -e "${BLUE}Not inside the AuctoriaAI repo. Setting up...${NC}"
+
+    # Ensure git is installed
+    if ! has_cmd "git"; then
+        echo -e "${RED}Error: git is required but not installed.${NC}"
+        case "$(uname -s)" in
+            Darwin) echo -e "${YELLOW}  Install with: xcode-select --install${NC}" ;;
+            Linux)  echo -e "${YELLOW}  Install with: sudo apt-get install git${NC}" ;;
+        esac
+        exit 1
+    fi
+
+    if [ -d "$CLONE_DIR" ]; then
+        # Directory exists — check if it's our repo
+        if [ -d "$CLONE_DIR/.git" ]; then
+            REMOTE_URL=$(git -C "$CLONE_DIR" remote get-url origin 2>/dev/null || echo "")
+            if echo "$REMOTE_URL" | grep -q "AuctoriaAI"; then
+                echo -e "${BLUE}Found existing AuctoriaAI clone. Pulling latest...${NC}"
+                if ! git -C "$CLONE_DIR" pull --ff-only 2>/dev/null; then
+                    echo -e "${YELLOW}Warning: Fast-forward pull failed (local changes?). Continuing with existing code.${NC}"
+                fi
+            else
+                echo -e "${RED}Error: ./$CLONE_DIR exists but is a different repository.${NC}"
+                echo -e "${YELLOW}  Please remove or rename it and try again.${NC}"
+                exit 1
+            fi
+        else
+            echo -e "${RED}Error: ./$CLONE_DIR exists but is not a git repository.${NC}"
+            echo -e "${YELLOW}  Please remove or rename it and try again.${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${BLUE}Cloning AuctoriaAI...${NC}"
+        if ! git clone "$REPO_URL" "$CLONE_DIR"; then
+            echo -e "${RED}Error: git clone failed. Please check your internet connection.${NC}"
+            exit 1
+        fi
+    fi
+
+    cd "$CLONE_DIR"
+
+    # Verify we landed in the right place
+    if ! is_inside_repo; then
+        echo -e "${RED}Error: Clone succeeded but repo structure looks wrong.${NC}"
+        exit 1
+    fi
+
+    echo -e "${GREEN}Repository ready at $(pwd)${NC}"
+fi
+# ---------------------------------------------------------------------------
+
 LOG_DIR="logs"
 mkdir -p $LOG_DIR
 
@@ -25,11 +100,6 @@ OPEN_CMD="open"
 if [ "$OS" = "Linux" ]; then
     OPEN_CMD="xdg-open"
 fi
-
-# Helper: Check if command exists
-has_cmd() {
-    command -v "$1" >/dev/null 2>&1
-}
 
 # 1. System Dependencies (PostgreSQL, Node, Python)
 echo -e "${BLUE}🔍 Checking System Dependencies...${NC}"
