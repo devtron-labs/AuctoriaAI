@@ -19,6 +19,9 @@ export interface Document {
   classification?: string | null;
   draft_versions?: DraftVersion[];
   has_fact_sheet?: boolean;
+  current_stage?: string | null;
+  error_message?: string | null;
+  validation_progress?: number;
 }
 
 // Matches backend DocumentCreate schema — no content field

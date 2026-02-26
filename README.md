@@ -4,6 +4,12 @@ AuctoriaAI is a full-stack governance platform that enforces quality, accuracy, 
 
 ## Recent Updates
 
+**Background Pipeline & Reliability** (February 2026)
+- Moved prompt-first draft generation to background tasks for better UX
+- Added automated retries for transient LLM failures (timeouts, rate limits)
+- New pipeline tracking columns: `current_stage`, `error_message`, and `validation_progress`
+- Frontend now features a real-time progress bar for document generation and evaluation
+
 **Multi-Provider LLM Support** (February 2026)
 - Added support for multiple LLM providers: Anthropic, OpenAI, Google AI, xAI, and Perplexity
 - New `llm_adapter.py` service automatically routes requests to the correct provider based on model name
@@ -300,6 +306,9 @@ The central entity. All other entities reference a document.
 | `review_notes`      | Text         | Reviewer comments                                        |
 | `force_approved`    | Boolean      | Admin override flag                                      |
 | `validation_report` | JSONB        | Full claim validation results                            |
+| `current_stage`      | String       | Human-readable pipeline stage name                       |
+| `error_message`      | Text         | Last error encountered during processing                 |
+| `validation_progress`| Integer      | Pipeline progress percentage (0–100)                      |
 | `created_at`        | DateTime     | Creation timestamp                                       |
 | `updated_at`        | DateTime     | Last update timestamp                                    |
 
@@ -723,12 +732,48 @@ services/
 ## 12. Running Locally
 
 ### Prerequisites
-- Python 3.10+
-- PostgreSQL 14+
-- Node.js 18+
+- **Docker** and **Docker Compose** (Recommended for easiest setup)
+- *OR* Manual setup:
+    - Python 3.10+
+    - PostgreSQL 14+
+    - Node.js 18+
 - At least one LLM provider API key (Anthropic, OpenAI, Google AI, xAI, or Perplexity)
 
-### Backend Setup
+### Quick Start (One-Command Setup)
+
+The easiest way to get AuctoriaAI running is using Docker. This will set up the database, backend, and frontend automatically.
+
+```bash
+# Clone and enter project directory
+cd AuctoriaAI
+
+# Run the setup script
+chmod +x setup.sh
+./setup.sh
+```
+
+**What this does:**
+1. Verifies Docker is installed.
+2. Creates your `.env` file from the example.
+3. Initializes the document storage directory.
+4. Builds and starts all services in the background.
+
+**Access the application:**
+- **Frontend UI:** [http://localhost](http://localhost)
+- **Backend API:** [http://localhost:8000](http://localhost:8000)
+- **API Docs:** [http://localhost:8000/docs](http://localhost:8000/docs)
+
+**Post-Setup Step:**
+Initialize the claim registry to satisfy the governance gates:
+```bash
+curl -X POST http://localhost:8000/api/v1/registry/sync
+```
+
+### Manual Setup (Non-Docker)
+
+If you prefer to run the components separately:
+
+#### Backend Setup
 
 ```bash
 # Clone and enter project directory
@@ -806,7 +851,7 @@ python -m alembic downgrade base
 ```
 
 ### Migration History Summary
-14 migrations covering:
+15 migrations covering:
 1. Initial schema (Document, DraftVersion, FactSheet)
 2. UUID type fixes
 3. Upload metadata fields (file_hash, file_size, mime_type, classification)
@@ -821,6 +866,7 @@ python -m alembic downgrade base
 12. Pipeline progress tracking columns
 13. LLM timeout configuration
 14. Multi-provider API key support (anthropic, openai, google, perplexity, xai)
+15. Error message column for pipeline reliability
 
 ---
 

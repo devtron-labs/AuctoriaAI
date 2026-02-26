@@ -190,7 +190,7 @@ function OverviewTab() {
                   <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
                   <YAxis type="category" dataKey="name" width={88} tick={{ fontSize: 12 }} />
                   <Tooltip
-                    formatter={(value: number) => [value, 'Documents']}
+                    formatter={(value: any) => [value, 'Documents']}
                     cursor={{ fill: 'rgba(0,0,0,0.04)' }}
                   />
                   <Bar dataKey="value" radius={[0, 4, 4, 0]}>
@@ -320,7 +320,7 @@ function AnalyticsTab() {
                     unit=" d"
                   />
                   <Tooltip
-                    formatter={(value: number) => [`${value} days`, 'Avg Time to Approval']}
+                    formatter={(value: any) => [`${value} days`, 'Avg Time to Approval']}
                   />
                   <Legend />
                   <Line
@@ -352,7 +352,7 @@ function AnalyticsTab() {
                 <XAxis type="number" tick={{ fontSize: 11 }} allowDecimals={false} />
                 <YAxis type="category" dataKey="name" width={88} tick={{ fontSize: 12 }} />
                 <Tooltip
-                  formatter={(value: number) => [value, 'Documents']}
+                  formatter={(value: any) => [value, 'Documents']}
                   cursor={{ fill: 'rgba(0,0,0,0.04)' }}
                 />
                 <Bar dataKey="value" radius={[0, 4, 4, 0]}>

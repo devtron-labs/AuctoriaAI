@@ -1,0 +1,42 @@
+services:
+  db:
+    image: postgres:15-alpine
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=veritas_ai
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d veritas_ai"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    volumes:
+      - ./storage:/app/storage
+    environment:
+      - DATABASE_URL=postgresql://postgres:password@db:5432/veritas_ai
+      - ENV=local
+      - CORS_ORIGINS=["http://localhost","http://localhost:80"]
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:

@@ -1,0 +1,30 @@
+{
+  "name": "auctoriaai",
+  "version": "1.0.0",
+  "description": "AuctoriaAI is a full-stack governance platform that enforces quality, accuracy, and compliance for AI-generated documents. It implements a structured multi-stage pipeline where every document travels through automated fact extraction, LLM-powered draft generation, rubric-based QA evaluation, claim validation, and human review — all with full audit trails.",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/devtron-labs/AuctoriaAI.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/devtron-labs/AuctoriaAI/issues"
+  },
+  "homepage": "https://github.com/devtron-labs/AuctoriaAI#readme",
+  "devDependencies": {
+    "vite": "^7.3.1"
+  }
+}

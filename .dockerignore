@@ -1,0 +1,10 @@
+.git
+.venv
+venv
+node_modules
+__pycache__
+*.pyc
+.pytest_cache
+.claude
+storage/documents/*
+.env
