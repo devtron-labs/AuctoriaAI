@@ -44,7 +44,25 @@ import {
 import { formatDateTime } from '@/lib/utils';
 import type { DocumentStatus } from '@/types/document';
 
-// ... (rest of the code remains the same until AdminDashboard)
+// ─── Chart color palette ────────────────────────────────────────────────────
+
+const STATUS_COLORS: Record<DocumentStatus, string> = {
+  DRAFT: '#6b7280',
+  VALIDATING: '#f59e0b',
+  PASSED: '#3b82f6',
+  HUMAN_REVIEW: '#f97316',
+  APPROVED: '#22c55e',
+  BLOCKED: '#ef4444',
+};
+
+const STATUS_LABELS: Record<DocumentStatus, string> = {
+  DRAFT: 'Draft',
+  VALIDATING: 'Validating',
+  PASSED: 'Passed QA',
+  HUMAN_REVIEW: 'In Review',
+  APPROVED: 'Approved',
+  BLOCKED: 'Blocked',
+};
 
 // ─── Shared loading / error states ──────────────────────────────────────────
 

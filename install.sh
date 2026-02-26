@@ -67,16 +67,18 @@ fi
 source .venv/bin/activate
 
 echo "  Installing/Updating dependencies..."
+# Ensure pip is up to date
+pip install --upgrade pip -q
 if command -v uv >/dev/null 2>&1; then
     uv pip install -r requirements.txt > /dev/null
 else
     pip install -r requirements.txt -q
 fi
 
-# 4. Database Migrations (Graceful check & Auto-fix)
+# 4. Database Migrations (Aggressive Fix)
 echo -n "  Verifying database connectivity..."
 if grep -q "postgresql" .env; then
-    # Helper to check connection and return error code/message
+    
     CHECK_DB_SCRIPT=$(cat <<EOF
 import psycopg2
 import os
@@ -84,6 +86,8 @@ import sys
 from dotenv import load_dotenv
 load_dotenv()
 dsn = os.getenv('DATABASE_URL')
+if not dsn:
+    sys.exit(1)
 try:
     conn = psycopg2.connect(dsn)
     conn.close()
@@ -91,32 +95,34 @@ try:
 except Exception as e:
     err_str = str(e)
     if "role \"postgres\" does not exist" in err_str:
-        sys.exit(2)  # Specific role error
+        sys.exit(2)
     if "database \"veritas_ai\" does not exist" in err_str:
-        sys.exit(3)  # Database missing
-    print(err_str)
+        sys.exit(3)
+    sys.stderr.write(err_str)
     sys.exit(1)
 EOF
 )
 
     DB_STATUS=0
-    python3 -c "$CHECK_DB_SCRIPT" > $LOG_DIR/db_check.err 2>&1 || DB_STATUS=$?
+    python3 -c "$CHECK_DB_SCRIPT" 2> $LOG_DIR/db_check.err || DB_STATUS=$?
 
-    if [ $DB_STATUS -eq 2 ] && [ "$OS" = "Darwin" ]; then
-        # On Mac, if 'postgres' role fails, try current user
+    # AUTO-FIX: Role "postgres" does not exist (Common on Mac)
+    if [ $DB_STATUS -eq 2 ]; then
         CURRENT_USER=$(whoami)
         echo -n " (fixing role)..."
+        # Be more liberal with the regex to catch variations
         if [ "$OS" = "Darwin" ]; then
-            sed -i '' "s|postgresql://postgres:password@|postgresql://$CURRENT_USER@|g" .env
+            sed -i '' "s|postgresql://[^:]*:[^@]*@|postgresql://$CURRENT_USER@|g" .env
+            sed -i '' "s|postgresql://[^@]*@|postgresql://$CURRENT_USER@|g" .env
         else
-            sed -i "s|postgresql://postgres:password@|postgresql://$CURRENT_USER@|g" .env
+            sed -i "s|postgresql://[^:]*:[^@]*@|postgresql://$CURRENT_USER@|g" .env
+            sed -i "s|postgresql://[^@]*@|postgresql://$CURRENT_USER@|g" .env
         fi
-        # Re-check
-        python3 -c "$CHECK_DB_SCRIPT" > $LOG_DIR/db_check.err 2>&1 || DB_STATUS=$?
+        python3 -c "$CHECK_DB_SCRIPT" 2> $LOG_DIR/db_check.err || DB_STATUS=$?
     fi
 
+    # AUTO-FIX: Database does not exist
     if [ $DB_STATUS -eq 3 ]; then
-        # Try to create the DB if missing
         echo -n " (creating db)..."
         CREATE_DB_SCRIPT=$(cat <<EOF
 import psycopg2
@@ -124,8 +130,13 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 dsn = os.getenv('DATABASE_URL')
-base_dsn = dsn.rsplit('/', 1)[0] + '/postgres'
-conn = psycopg2.connect(base_dsn)
+# Connect to default 'postgres' or 'template1' to create the target DB
+try:
+    base_dsn = dsn.rsplit('/', 1)[0] + '/postgres'
+    conn = psycopg2.connect(base_dsn)
+except:
+    base_dsn = dsn.rsplit('/', 1)[0] + '/template1'
+    conn = psycopg2.connect(base_dsn)
 conn.autocommit = True
 cur = conn.cursor()
 cur.execute('CREATE DATABASE veritas_ai')
@@ -133,23 +144,24 @@ cur.close()
 conn.close()
 EOF
 )
-        python3 -c "$CREATE_DB_SCRIPT" > /dev/null 2>&1 || true
-        # Re-check
-        python3 -c "$CHECK_DB_SCRIPT" > $LOG_DIR/db_check.err 2>&1 || DB_STATUS=$?
+        python3 -c "$CREATE_DB_SCRIPT" 2>/dev/null || true
+        python3 -c "$CHECK_DB_SCRIPT" 2> $LOG_DIR/db_check.err || DB_STATUS=$?
     fi
 
     if [ $DB_STATUS -eq 0 ]; then
         echo -e " ${GREEN}Connected.${NC}"
         echo -n "  Applying migrations..."
-        if python3 -m alembic upgrade head > $LOG_DIR/migrations.log 2>&1; then
+        # Apply migrations using the venv's python and alembic
+        if PYTHONPATH=. .venv/bin/python3 -m alembic upgrade head > $LOG_DIR/migrations.log 2>&1; then
             echo -e " ${GREEN}Up to date.${NC}"
         else
-            echo -e " ${RED}Failed.${NC} (Check $LOG_DIR/migrations.log)"
+            echo -e " ${RED}Failed.${NC}"
+            echo -e "     ${RED}Error:${NC} Tables could not be created. Check $LOG_DIR/migrations.log"
         fi
     else
         echo -e " ${YELLOW}Failed.${NC}"
-        echo -e "     ${YELLOW}Note:${NC} $(cat $LOG_DIR/db_check.err)"
-        echo -e "     Ensure Postgres is running. Backend may fail on startup."
+        echo -e "     ${YELLOW}Note:${NC} $(cat $LOG_DIR/db_check.err | head -n 1)"
+        echo -e "     Ensure Postgres is running. Backend may crash if tables are missing."
     fi
 else
     echo -e " ${YELLOW}Skipped.${NC} (No PostgreSQL URL found)"
@@ -159,7 +171,7 @@ fi
 echo -e "\n${BLUE}📦 Setting up Frontend...${NC}"
 cd frontend
 if [ ! -d "node_modules" ]; then
-    echo "  Installing dependencies (this may take a minute)..."
+    echo "  Installing dependencies..."
     if command -v pnpm >/dev/null 2>&1; then
         pnpm install --silent
     else
@@ -185,6 +197,7 @@ cleanup_ports
 
 echo "  Restarting Backend (Port $PORT_BE)..."
 source .venv/bin/activate
+export PYTHONPATH=.
 nohup uvicorn app.main:app --host 0.0.0.0 --port $PORT_BE > $LOG_DIR/backend.log 2>&1 &
 BE_PID=$!
 
