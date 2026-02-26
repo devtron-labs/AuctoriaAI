@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # AuctoriaAI Fully Automated Installation & Startup Script
-# Optimized for zero-config: Handles fragmented PostgreSQL installations on macOS.
+# Optimized for zero-config: Handles broken or non-standard PostgreSQL installations.
 
 set -e
 
@@ -35,12 +35,7 @@ has_cmd() {
 echo -e "${BLUE}🔍 Checking System Dependencies...${NC}"
 
 # --- PostgreSQL Auto-Install & Start ---
-PG_INSTALLED=false
-if has_cmd "psql"; then
-    PG_INSTALLED=true
-fi
-
-if [ "$PG_INSTALLED" = false ]; then
+if ! has_cmd "psql"; then
     echo -e "  ${YELLOW}PostgreSQL not found. Installing...${NC}"
     if [ "$OS" = "Darwin" ]; then
         if ! has_cmd "brew"; then
@@ -62,22 +57,40 @@ fi
 if ! nc -z localhost 5432 >/dev/null 2>&1; then
     echo -e "  ${YELLOW}PostgreSQL is stopped. Starting service...${NC}"
     if [ "$OS" = "Darwin" ]; then
-        # Try to find the actual installed formula name (it might be postgresql@15, @16, etc.)
-        ACTUAL_FORMULA=$(brew list --formula | grep "^postgresql" | head -n 1 || echo "postgresql")
-        echo "  Attempting to start: $ACTUAL_FORMULA"
-        brew services start "$ACTUAL_FORMULA" || brew services restart "$ACTUAL_FORMULA"
+        # 1. Try to find the service name from brew services list (most accurate)
+        ACTUAL_SERVICE=$(brew services list 2>/dev/null | awk '{print $1}' | grep "^postgresql" | head -n 1 || echo "")
+        
+        # 2. Fallback to brew list if services list didn't help
+        if [ -z "$ACTUAL_SERVICE" ]; then
+            ACTUAL_SERVICE=$(brew list --formula 2>/dev/null | grep "^postgresql" | head -n 1 || echo "")
+        fi
+        
+        # 3. Final fallback to generic name
+        if [ -z "$ACTUAL_SERVICE" ]; then
+            ACTUAL_SERVICE="postgresql"
+        fi
+
+        echo "  Attempting to start: $ACTUAL_SERVICE"
+        brew services start "$ACTUAL_SERVICE" || brew services restart "$ACTUAL_SERVICE" || true
     else
-        sudo systemctl start postgresql
+        sudo systemctl start postgresql || true
     fi
+    
     # Wait for startup
     echo -n "  Waiting for DB to wake up"
-    for i in {1..5}; do printf "."; sleep 1; done
+    for i in {1..8}; do
+        if nc -z localhost 5432 >/dev/null 2>&1; then break; fi
+        printf "."
+        sleep 1
+    done
     echo ""
 fi
 
 # Final check
 if ! nc -z localhost 5432 >/dev/null 2>&1; then
-    echo -e "  ${RED}✘ Failed to start PostgreSQL. Please start it manually.${NC}"
+    echo -e "  ${RED}✘ Failed to start PostgreSQL.${NC}"
+    echo -e "  ${YELLOW}Note:${NC} If you are using Postgres.app or a custom install, please start it manually."
+    echo -e "  Then run this script again."
     exit 1
 else
     echo -e "  ${GREEN}✔${NC} PostgreSQL is running"
@@ -120,7 +133,7 @@ else
     pip install -r requirements.txt -q
 fi
 
-# 4. Database Probe & Migration (Aggressive Fix)
+# 4. Database Probe & Migration
 echo -n "  Probing database connectivity..."
 PROBE_SCRIPT=$(cat <<EOF
 import psycopg2
@@ -142,7 +155,6 @@ original_dsn = os.getenv('DATABASE_URL')
 db_name = original_dsn.rsplit('/', 1)[1] if '/' in original_dsn else 'veritas_ai'
 current_user = getpass.getuser()
 
-# Try working credentials
 attempts = [
     original_dsn,
     f"postgresql://{current_user}@localhost/{db_name}",
@@ -160,7 +172,6 @@ for dsn in attempts:
 if working_dsn:
     print(f"SUCCESS|{working_dsn}")
 else:
-    # Try finding working auth via system DB
     auth_attempts = [
         f"postgresql://{current_user}@localhost/postgres",
         f"postgresql://postgres@localhost/postgres"
@@ -182,7 +193,6 @@ TYPE=$(echo $RESULT | cut -d'|' -f1)
 DSN=$(echo $RESULT | cut -d'|' -f2)
 
 if [ "$TYPE" = "SUCCESS" ] || [ "$TYPE" = "CREATE" ]; then
-    # Update .env
     if [ "$OS" = "Darwin" ]; then sed -i '' "s|^DATABASE_URL=.*|DATABASE_URL=$DSN|g" .env; else sed -i "s|^DATABASE_URL=.*|DATABASE_URL=$DSN|g" .env; fi
     
     if [ "$TYPE" = "CREATE" ]; then
