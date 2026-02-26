@@ -90,6 +90,17 @@ def test_conn(dsn):
         conn = psycopg2.connect(dsn, connect_timeout=2)
         conn.close()
         return True
+    except Exception as e:
+        return False
+
+def check_migrated(dsn):
+    try:
+        conn = psycopg2.connect(dsn)
+        cur = conn.cursor()
+        cur.execute("select exists(select * from information_schema.tables where table_name='system_settings')")
+        migrated = cur.fetchone()[0]
+        conn.close()
+        return migrated
     except:
         return False
 
@@ -97,18 +108,16 @@ load_dotenv()
 original_dsn = os.getenv('DATABASE_URL')
 db_name = original_dsn.rsplit('/', 1)[1] if '/' in original_dsn else 'veritas_ai'
 base_url = "localhost:5432"
+current_user = getpass.getuser()
 
-# Try these in order:
-# 1. Original DSN from .env
-# 2. Current OS user (no password)
-# 3. 'postgres' user (no password)
-# 4. 'postgres' user (password 'password')
-
+# Strategy 1: Find ANY user that works
 attempts = [
     original_dsn,
-    f"postgresql://{getpass.getuser()}@{base_url}/{db_name}",
-    f"postgresql://postgres@{base_url}/{db_name}",
-    f"postgresql://postgres:password@{base_url}/{db_name}"
+    f"postgresql://{current_user}@localhost/{db_name}",
+    f"postgresql://postgres@localhost/{db_name}",
+    f"postgresql://postgres:password@localhost/{db_name}",
+    f"postgresql://{current_user}@127.0.0.1/{db_name}",
+    f"postgresql://postgres@127.0.0.1/{db_name}"
 ]
 
 working_dsn = None
@@ -118,22 +127,15 @@ for dsn in attempts:
         break
 
 if working_dsn:
-    # Check if migrated
-    try:
-        conn = psycopg2.connect(working_dsn)
-        cur = conn.cursor()
-        cur.execute("select exists(select * from information_schema.tables where table_name='system_settings')")
-        migrated = cur.fetchone()[0]
-        conn.close()
-        print(f"SUCCESS|{working_dsn}|{'YES' if migrated else 'NO'}")
-    except:
-        print(f"SUCCESS|{working_dsn}|NO")
+    is_migrated = check_migrated(working_dsn)
+    print(f"SUCCESS|{working_dsn}|{'YES' if is_migrated else 'NO'}")
 else:
-    # If all failed because DB doesn't exist, try connecting to 'postgres' system DB to find working auth
+    # Strategy 2: If we can't connect to the DB, can we connect to 'postgres' system DB?
     auth_attempts = [
-        f"postgresql://{getpass.getuser()}@{base_url}/postgres",
-        f"postgresql://postgres@{base_url}/postgres",
-        f"postgresql://postgres:password@{base_url}/postgres"
+        f"postgresql://{current_user}@localhost/postgres",
+        f"postgresql://postgres@localhost/postgres",
+        f"postgresql://{current_user}@127.0.0.1/postgres",
+        f"postgresql://postgres@127.0.0.1/postgres"
     ]
     working_auth = None
     for dsn in auth_attempts:
@@ -142,7 +144,6 @@ else:
             break
     
     if working_auth:
-        # We found working credentials, but the database itself is missing
         final_dsn = working_auth.rsplit('/', 1)[0] + f"/{db_name}"
         print(f"CREATE|{final_dsn}")
     else:
@@ -156,7 +157,7 @@ EOF
     MIGRATED=$(echo $RESULT | cut -d'|' -f3)
 
     if [ "$TYPE" = "SUCCESS" ] || [ "$TYPE" = "CREATE" ]; then
-        # Update .env with the working DSN
+        # UPDATE .env WITH WORKING CREDENTIALS
         if [ "$OS" = "Darwin" ]; then
             sed -i '' "s|^DATABASE_URL=.*|DATABASE_URL=$DSN|g" .env
         else
@@ -165,7 +166,8 @@ EOF
         
         if [ "$TYPE" = "CREATE" ]; then
             echo -n " (creating db)..."
-            createdb veritas_ai 2>/dev/null || python3 -c "import psycopg2; conn=psycopg2.connect('$DSN'.rsplit('/', 1)[0] + '/postgres'); conn.autocommit=True; conn.cursor().execute('CREATE DATABASE veritas_ai'); conn.close()" 2>/dev/null || true
+            # Try connecting to system DB to create target DB
+            python3 -c "import psycopg2; dsn='$DSN'; base=dsn.rsplit('/', 1)[0] + '/postgres'; conn=psycopg2.connect(base); conn.autocommit=True; conn.cursor().execute('CREATE DATABASE veritas_ai'); conn.close()" 2>/dev/null || true
             echo -e " ${GREEN}Created.${NC}"
         else
             echo -e " ${GREEN}Connected.${NC}"
@@ -176,13 +178,13 @@ EOF
             echo -e " ${GREEN}Up to date.${NC}"
         else
             echo -e " ${RED}Failed.${NC}"
-            echo -e "     ${RED}Error:${NC} Check $LOG_DIR/migrations.log"
+            echo -e "     ${RED}Error:${NC} Tables could not be created. Check $LOG_DIR/migrations.log"
             tail -n 5 $LOG_DIR/migrations.log
         fi
     else
         echo -e " ${RED}Failed.${NC}"
         echo -e "     ${YELLOW}Note:${NC} Could not find any working PostgreSQL credentials."
-        echo -e "     Ensure Postgres is running on port 5432."
+        echo -e "     Check if PostgreSQL is running: ${BOLD}brew services list${NC}"
     fi
 else
     echo -e " ${YELLOW}Skipped.${NC} (No PostgreSQL URL found)"
