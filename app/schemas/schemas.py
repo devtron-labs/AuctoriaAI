@@ -60,6 +60,13 @@ class SystemSettingsResponse(BaseModel):
     perplexity_api_key: Optional[str] = None
     xai_api_key:        Optional[str] = None
 
+    @field_validator("id", mode="before")
+    @classmethod
+    def coerce_id_to_str(cls, v: Any) -> str:
+        if isinstance(v, UUID):
+            return str(v)
+        return v
+
 
 class SystemSettingsUpdate(BaseModel):
     """Request body for PUT /admin/settings.

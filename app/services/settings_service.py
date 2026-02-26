@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import ProgrammingError
 
 from app.config import settings as _config
 from app.models.models import SystemSettings
@@ -90,10 +91,37 @@ class ActiveSettings:
 # Private helpers
 # ---------------------------------------------------------------------------
 
+def _get_virtual_defaults() -> ActiveSettings:
+    """Return an ActiveSettings snapshot populated from config.py constants.
+
+    Used as a fallback when the system_settings table does not exist yet
+    (e.g. during initial installation before migrations have run).
+    """
+    return ActiveSettings(
+        id="virtual-default",
+        registry_staleness_hours=_config.registry_staleness_hours,
+        llm_model_name=_config.llm_model_name,
+        max_draft_length=_config.max_draft_length,
+        qa_passing_threshold=_config.qa_passing_threshold,
+        max_qa_iterations=_config.max_qa_iterations,
+        qa_llm_model=_config.qa_llm_model,
+        governance_score_threshold=_config.governance_score_threshold,
+        llm_timeout_seconds=120,
+        notification_webhook_url=_config.notification_webhook_url,
+        updated_by="system-default",
+        updated_at=datetime.now(timezone.utc),
+        anthropic_api_key=None,
+        openai_api_key=None,
+        google_api_key=None,
+        perplexity_api_key=None,
+        xai_api_key=None,
+    )
+
+
 def _row_to_active(row: SystemSettings) -> ActiveSettings:
     """Convert an ORM row to an immutable ActiveSettings snapshot."""
     return ActiveSettings(
-        id=row.id,
+        id=str(row.id),
         registry_staleness_hours=row.registry_staleness_hours,
         llm_model_name=row.llm_model_name,
         max_draft_length=row.max_draft_length,
@@ -147,6 +175,9 @@ def get_settings(db: Session) -> ActiveSettings:
     On cache miss or expiry, queries the DB. If the settings table is empty
     (fresh install), seeds a default row from app/config.py constants.
 
+    If the table itself is missing (UndefinedTable), returns defaults from
+    config.py without seeding (since the table cannot be written to).
+
     Args:
         db: Active SQLAlchemy session.
 
@@ -161,7 +192,20 @@ def get_settings(db: Session) -> ActiveSettings:
             return cached
 
     # Cache miss — query DB (outside the lock to avoid blocking other threads)
-    row: Optional[SystemSettings] = db.query(SystemSettings).first()
+    try:
+        row: Optional[SystemSettings] = db.query(SystemSettings).first()
+    except ProgrammingError as e:
+        # PostgreSQL: 42P01 is UndefinedTable.
+        # SQLite: "no such table" in the error message.
+        orig_msg = str(e.orig).lower()
+        if (hasattr(e.orig, "pgcode") and e.orig.pgcode == "42P01") or "no such table" in orig_msg:
+            logger.warning(
+                "system_settings table does not exist yet — returning config defaults. "
+                "Run 'alembic upgrade head' to initialize the database."
+            )
+            return _get_virtual_defaults()
+        raise
+
     if row is None:
         row = _seed_defaults(db)
 

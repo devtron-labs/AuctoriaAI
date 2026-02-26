@@ -3,12 +3,16 @@ from logging.config import fileConfig
 from sqlalchemy import engine_from_config, pool
 
 from alembic import context
+from dotenv import load_dotenv
 
 # Import models so Alembic can detect them
 from app.database import Base  # noqa: F401
 import app.models.models  # noqa: F401
 
 import os
+
+# Load .env file if it exists
+load_dotenv()
 
 config = context.config
 

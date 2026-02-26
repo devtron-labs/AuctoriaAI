@@ -83,10 +83,8 @@ def get_system_settings(
     The response includes all configurable parameters along with the timestamp
     and name of the last admin who made a change. API keys are masked.
     """
-    row = db.query(SystemSettings).first()
-    if row is None:
-        raise HTTPException(status_code=404, detail="System settings row not found.")
-    data = SystemSettingsResponse.model_validate(row).model_dump()
+    active = settings_service.get_settings(db)
+    data = SystemSettingsResponse.model_validate(active).model_dump()
     for field in _API_KEY_FIELDS:
         data[field] = _mask_key(data.get(field))
     return SystemSettingsResponse(**data)
@@ -114,7 +112,7 @@ def update_system_settings(
     payload: SystemSettingsUpdate,
     db: Session = Depends(get_db),
     _: None = Depends(_require_admin),
-) -> SystemSettings:
+) -> SystemSettingsResponse:
     """Update admin-configurable system settings.
 
     All changes take effect on the next request (cache TTL: 60 s).
@@ -159,7 +157,12 @@ def update_system_settings(
         row.qa_passing_threshold,
         row.governance_score_threshold,
     )
-    return row
+
+    # Return masked response
+    data = SystemSettingsResponse.model_validate(row).model_dump()
+    for field in _API_KEY_FIELDS:
+        data[field] = _mask_key(data.get(field))
+    return SystemSettingsResponse(**data)
 
 
 @admin_router.post(
