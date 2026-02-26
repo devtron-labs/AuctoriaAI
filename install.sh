@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # AuctoriaAI Fully Automated Installation & Startup Script
-# Optimized for zero-config: Installs and starts PostgreSQL, Node, and Python.
+# Optimized for zero-config: Handles fragmented PostgreSQL installations on macOS.
 
 set -e
 
@@ -35,7 +35,12 @@ has_cmd() {
 echo -e "${BLUE}🔍 Checking System Dependencies...${NC}"
 
 # --- PostgreSQL Auto-Install & Start ---
-if ! has_cmd "psql"; then
+PG_INSTALLED=false
+if has_cmd "psql"; then
+    PG_INSTALLED=true
+fi
+
+if [ "$PG_INSTALLED" = false ]; then
     echo -e "  ${YELLOW}PostgreSQL not found. Installing...${NC}"
     if [ "$OS" = "Darwin" ]; then
         if ! has_cmd "brew"; then
@@ -43,31 +48,39 @@ if ! has_cmd "psql"; then
             exit 1
         fi
         brew install postgresql
-        brew services start postgresql
     elif [ "$OS" = "Linux" ]; then
         if has_cmd "apt-get"; then
             sudo apt-get update && sudo apt-get install -y postgresql postgresql-contrib
-            sudo systemctl start postgresql
-            sudo systemctl enable postgresql
         else
             echo -e "  ${RED}Unsupported Linux distro. Please install PostgreSQL manually.${NC}"
             exit 1
         fi
     fi
-else
-    echo -e "  ${GREEN}✔${NC} PostgreSQL installed"
 fi
 
-# Ensure PostgreSQL is running
+# Robust Service Start logic
 if ! nc -z localhost 5432 >/dev/null 2>&1; then
     echo -e "  ${YELLOW}PostgreSQL is stopped. Starting service...${NC}"
     if [ "$OS" = "Darwin" ]; then
-        brew services start postgresql
+        # Try to find the actual installed formula name (it might be postgresql@15, @16, etc.)
+        ACTUAL_FORMULA=$(brew list --formula | grep "^postgresql" | head -n 1 || echo "postgresql")
+        echo "  Attempting to start: $ACTUAL_FORMULA"
+        brew services start "$ACTUAL_FORMULA" || brew services restart "$ACTUAL_FORMULA"
     else
         sudo systemctl start postgresql
     fi
     # Wait for startup
-    sleep 3
+    echo -n "  Waiting for DB to wake up"
+    for i in {1..5}; do printf "."; sleep 1; done
+    echo ""
+fi
+
+# Final check
+if ! nc -z localhost 5432 >/dev/null 2>&1; then
+    echo -e "  ${RED}✘ Failed to start PostgreSQL. Please start it manually.${NC}"
+    exit 1
+else
+    echo -e "  ${GREEN}✔${NC} PostgreSQL is running"
 fi
 
 # --- Node & Python Check ---
@@ -109,7 +122,6 @@ fi
 
 # 4. Database Probe & Migration (Aggressive Fix)
 echo -n "  Probing database connectivity..."
-# Using the previously implemented intelligent probe logic
 PROBE_SCRIPT=$(cat <<EOF
 import psycopg2
 import os
@@ -226,7 +238,11 @@ echo -n "  Waiting for services to stabilize..."
 until $(curl -sf -o /dev/null http://localhost:$PORT_BE/health); do printf "."; sleep 2; done
 echo -e " ${GREEN}Ready!${NC}"
 
-# 8. Smart Launch
+# 8. Auto-Sync Registry
+echo "  Syncing Claim Registry..."
+curl -s -X POST http://localhost:$PORT_BE/api/v1/registry/sync > /dev/null || true
+
+# 9. Smart Launch
 echo -n "  Checking configuration state..."
 SETTINGS_JSON=$(curl -s http://localhost:$PORT_BE/api/v1/admin/settings || echo "{}")
 if echo "$SETTINGS_JSON" | grep -q "\*"; then
