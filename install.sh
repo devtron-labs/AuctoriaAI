@@ -2,6 +2,7 @@
 
 # AuctoriaAI Fully Automated Installation & Startup Script
 # This script installs, starts services in the background, and opens the Admin Panel.
+# Optimized for idempotency and clean error handling.
 
 set -e
 
@@ -36,7 +37,7 @@ check_dep() {
 check_dep "python3"
 check_dep "node"
 check_dep "npm"
-check_dep "lsof" # Used to check ports
+check_dep "lsof"
 
 # 2. Environment & Storage
 if [ ! -f .env ]; then
@@ -60,36 +61,54 @@ mkdir -p storage/documents
 # 3. Backend Setup
 echo -e "\n${BLUE}📦 Setting up Backend...${NC}"
 if [ ! -d ".venv" ]; then
+    echo "  Creating virtual environment..."
     python3 -m venv .venv
 fi
 source .venv/bin/activate
 
+echo "  Installing/Updating dependencies..."
 if command -v uv >/dev/null 2>&1; then
-    uv pip install -r requirements.txt
+    uv pip install -r requirements.txt > /dev/null
 else
     pip install -r requirements.txt -q
 fi
 
-# 4. Database Migrations
-echo -e "${BLUE}🗄️  Running Migrations...${NC}"
+# 4. Database Migrations (Graceful check)
+echo -n "  Checking database migrations..."
 if grep -q "postgresql" .env; then
-    python -m alembic upgrade head || echo -e "${YELLOW}  ⚠ Migration failed. Ensure DB is up.${NC}"
+    # Try to check connection without showing traceback
+    if python3 -c "import psycopg2; import os; from dotenv import load_dotenv; load_dotenv(); dsn=os.getenv('DATABASE_URL'); conn=psycopg2.connect(dsn); conn.close()" > /dev/null 2>&1; then
+        if python3 -m alembic upgrade head > $LOG_DIR/migrations.log 2>&1; then
+            echo -e " ${GREEN}Up to date.${NC}"
+        else
+            echo -e " ${RED}Failed.${NC} (Check $LOG_DIR/migrations.log)"
+        fi
+    else
+        echo -e " ${YELLOW}Connection failed.${NC}"
+        echo -e "     ${YELLOW}Note:${NC} Ensure Postgres is running and DATABASE_URL in .env is correct."
+        echo -e "     (The 'postgres' role error usually means your local Postgres user differs from .env)"
+    fi
+else
+    echo -e " ${YELLOW}Skipped.${NC} (No PostgreSQL URL found)"
 fi
 
 # 5. Frontend Setup
 echo -e "\n${BLUE}📦 Setting up Frontend...${NC}"
 cd frontend
-if command -v pnpm >/dev/null 2>&1; then
-    pnpm install --silent
+if [ ! -d "node_modules" ]; then
+    echo "  Installing dependencies (this may take a minute)..."
+    if command -v pnpm >/dev/null 2>&1; then
+        pnpm install --silent
+    else
+        npm install --silent
+    fi
 else
-    npm install --silent
+    echo "  Dependencies already installed. Skipping..."
 fi
 cd ..
 
 # 6. Automated Startup
 echo -e "\n${GREEN}${BOLD}⚡ Starting AuctoriaAI Services...${NC}"
-
-# Kill existing processes on these ports if any
 
 cleanup_ports() {
     for port in $PORT_BE $PORT_FE; do
@@ -101,12 +120,12 @@ cleanup_ports() {
 }
 cleanup_ports
 
-echo "  Starting Backend (Port $PORT_BE)..."
+echo "  Restarting Backend (Port $PORT_BE)..."
 source .venv/bin/activate
 nohup uvicorn app.main:app --host 0.0.0.0 --port $PORT_BE > $LOG_DIR/backend.log 2>&1 &
 BE_PID=$!
 
-echo "  Starting Frontend (Port $PORT_FE)..."
+echo "  Restarting Frontend (Port $PORT_FE)..."
 cd frontend
 nohup npm run dev -- --port $PORT_FE > ../$LOG_DIR/frontend.log 2>&1 &
 FE_PID=$!
@@ -127,13 +146,12 @@ until $(curl -sf -o /dev/null http://localhost:$PORT_BE/health); do
 done
 echo -e " ${GREEN}Ready!${NC}"
 
-# 8. Auto-Sync Registry
+# 8. Auto-Sync Registry (Idempotent)
 echo "  Syncing Claim Registry..."
 curl -s -X POST http://localhost:$PORT_BE/api/v1/registry/sync > /dev/null || true
 
 # 9. Smart Launch
 echo -n "  Checking configuration state..."
-# Fetch settings and check if any API key is configured (look for masked keys starting with *)
 SETTINGS_JSON=$(curl -s http://localhost:$PORT_BE/api/v1/admin/settings || echo "{}")
 if echo "$SETTINGS_JSON" | grep -q "\*"; then
     echo -e " ${GREEN}Configured.${NC}"
