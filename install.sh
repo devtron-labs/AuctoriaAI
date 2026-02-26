@@ -43,6 +43,18 @@ if [ ! -f .env ]; then
     echo "  Creating .env from .env.example..."
     cp .env.example .env
 fi
+
+PORT_BE=8000
+PORT_FE=5173
+
+if [ ! -f frontend/.env ]; then
+    echo "  Creating frontend/.env..."
+    if [ -f frontend/.env.example ]; then
+        cp frontend/.env.example frontend/.env
+    else
+        echo "VITE_API_URL=http://localhost:$PORT_BE/api/v1" > frontend/.env
+    fi
+fi
 mkdir -p storage/documents
 
 # 3. Backend Setup
@@ -78,8 +90,6 @@ cd ..
 echo -e "\n${GREEN}${BOLD}⚡ Starting AuctoriaAI Services...${NC}"
 
 # Kill existing processes on these ports if any
-PORT_BE=8000
-PORT_FE=5173
 
 cleanup_ports() {
     for port in $PORT_BE $PORT_FE; do
