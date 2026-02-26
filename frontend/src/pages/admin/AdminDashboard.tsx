@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   FileText,
   Clock,
@@ -44,25 +44,7 @@ import {
 import { formatDateTime } from '@/lib/utils';
 import type { DocumentStatus } from '@/types/document';
 
-// ─── Chart color palette ────────────────────────────────────────────────────
-
-const STATUS_COLORS: Record<DocumentStatus, string> = {
-  DRAFT: '#6b7280',
-  VALIDATING: '#f59e0b',
-  PASSED: '#3b82f6',
-  HUMAN_REVIEW: '#f97316',
-  APPROVED: '#22c55e',
-  BLOCKED: '#ef4444',
-};
-
-const STATUS_LABELS: Record<DocumentStatus, string> = {
-  DRAFT: 'Draft',
-  VALIDATING: 'Validating',
-  PASSED: 'Passed QA',
-  HUMAN_REVIEW: 'In Review',
-  APPROVED: 'Approved',
-  BLOCKED: 'Blocked',
-};
+// ... (rest of the code remains the same until AdminDashboard)
 
 // ─── Shared loading / error states ──────────────────────────────────────────
 
@@ -425,6 +407,13 @@ function AnalyticsTab() {
 // ─── Admin Dashboard (root) ──────────────────────────────────────────────────
 
 export default function AdminDashboard() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('tab') || 'overview';
+
+  const handleTabChange = (value: string) => {
+    setSearchParams({ tab: value });
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -434,7 +423,7 @@ export default function AdminDashboard() {
         </p>
       </div>
 
-      <Tabs defaultValue="overview">
+      <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList className="mb-4">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="analytics">Analytics</TabsTrigger>
@@ -464,3 +453,4 @@ export default function AdminDashboard() {
     </div>
   );
 }
+

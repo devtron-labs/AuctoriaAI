@@ -1,8 +1,7 @@
 #!/bin/bash
 
-# AuctoriaAI Lightweight Installation Script
-# This script sets up the project locally for maximum speed and minimum resource usage.
-# Inspired by Claude's lean installation process.
+# AuctoriaAI Fully Automated Installation & Startup Script
+# This script installs, starts services in the background, and opens the Admin Panel.
 
 set -e
 
@@ -14,115 +13,133 @@ YELLOW='\033[1;33m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
 
-echo -e "${BLUE}${BOLD}🚀 AuctoriaAI Installation${NC}"
+LOG_DIR="logs"
+mkdir -p $LOG_DIR
+
+echo -e "${BLUE}${BOLD}🚀 AuctoriaAI: Automated Setup & Startup${NC}"
 echo -e "------------------------------------------------"
 
-# Detect OS
+# Detect OS & Browser Open Command
 OS="$(uname -s)"
-case "${OS}" in
-    Darwin)  platform="macOS" ;;
-    Linux)   platform="Linux" ;;
-    *)       platform="Unknown" ;;
-esac
+OPEN_CMD="open"
+if [ "$OS" = "Linux" ]; then
+    OPEN_CMD="xdg-open"
+fi
 
-echo -e "Platform: ${GREEN}${platform}${NC}"
-
-# Check for required dependencies
+# 1. Dependency Check
 check_dep() {
     if ! command -v "$1" >/dev/null 2>&1; then
         echo -e "${RED}✘ Error: $1 is not installed.${NC}"
-        deps_missing=true
-    else
-        echo -e "${GREEN}✔${NC} $1 found"
+        exit 1
     fi
 }
-
-echo -e "\nChecking dependencies..."
-deps_missing=false
-check_dep "git"
 check_dep "python3"
 check_dep "node"
 check_dep "npm"
+check_dep "lsof" # Used to check ports
 
-if [ "$deps_missing" = true ]; then
-    echo -e "\n${RED}Please install the missing dependencies and try again.${NC}"
-    exit 1
-fi
-
-# 1. Environment & Storage Setup
-echo -e "\n${BLUE}${BOLD}⚙️  Configuring Environment...${NC}"
+# 2. Environment & Storage
 if [ ! -f .env ]; then
     echo "  Creating .env from .env.example..."
     cp .env.example .env
-    echo -e "  ${YELLOW}Action Required:${NC} Update ANTHROPIC_API_KEY and DATABASE_URL in .env"
-else
-    echo "  .env file already exists."
 fi
+mkdir -p storage/documents
 
-if [ ! -d storage/documents ]; then
-    echo "  Creating storage directory..."
-    mkdir -p storage/documents
-fi
-
-# 2. Backend Setup
-echo -e "\n${BLUE}${BOLD}📦 Setting up Backend...${NC}"
+# 3. Backend Setup
+echo -e "\n${BLUE}📦 Setting up Backend...${NC}"
 if [ ! -d ".venv" ]; then
-    echo "  Creating Python virtual environment..."
     python3 -m venv .venv
 fi
-
 source .venv/bin/activate
 
-# Use uv if available for faster installation
 if command -v uv >/dev/null 2>&1; then
-    echo -e "  Using ${GREEN}uv${NC} for lightning-fast dependency installation..."
     uv pip install -r requirements.txt
 else
-    echo "  Installing Python dependencies (pip)..."
-    pip install --upgrade pip -q
     pip install -r requirements.txt -q
 fi
 
-# 3. Database Migrations
-echo -e "\n${BLUE}${BOLD}🗄️  Initializing Database...${NC}"
+# 4. Database Migrations
+echo -e "${BLUE}🗄️  Running Migrations...${NC}"
 if grep -q "postgresql" .env; then
-    echo "  PostgreSQL detected in .env. Attempting migrations..."
-    if python -m alembic upgrade head 2>/dev/null; then
-        echo -e "  ${GREEN}✔${NC} Migrations applied successfully."
-    else
-        echo -e "  ${YELLOW}⚠ Skipping migrations:${NC} Ensure PostgreSQL is running and DATABASE_URL is correct."
-    fi
-else
-    echo -e "  ${YELLOW}⚠ Skipping migrations:${NC} No PostgreSQL URL found in .env."
+    python -m alembic upgrade head || echo -e "${YELLOW}  ⚠ Migration failed. Ensure DB is up.${NC}"
 fi
 
-# 4. Frontend Setup
-echo -e "\n${BLUE}${BOLD}📦 Setting up Frontend...${NC}"
+# 5. Frontend Setup
+echo -e "\n${BLUE}📦 Setting up Frontend...${NC}"
 cd frontend
-
-# Use pnpm if available for faster installation
 if command -v pnpm >/dev/null 2>&1; then
-    echo -e "  Using ${GREEN}pnpm${NC} for fast dependency installation..."
     pnpm install --silent
 else
-    echo "  Installing Node dependencies (npm)..."
     npm install --silent
 fi
 cd ..
 
-# Final Instructions
-echo -e "\n${GREEN}${BOLD}✅ Installation Complete!${NC}"
-echo -e "------------------------------------------------"
-echo -e "${BOLD}To start AuctoriaAI:${NC}"
-echo -e ""
-echo -e "${BLUE}Terminal 1 (Backend):${NC}"
-echo -e "  source .venv/bin/activate"
-echo -e "  uvicorn app.main:app --reload"
-echo -e ""
-echo -e "${BLUE}Terminal 2 (Frontend):${NC}"
-echo -e "  cd frontend && npm run dev"
-echo -e ""
-echo -e "${YELLOW}Initial Setup Task:${NC}"
-echo -e "  After starting the backend, run this to sync the claim registry:"
-echo -e "  ${BOLD}curl -X POST http://localhost:8000/api/v1/registry/sync${NC}"
+# 6. Automated Startup
+echo -e "\n${GREEN}${BOLD}⚡ Starting AuctoriaAI Services...${NC}"
+
+# Kill existing processes on these ports if any
+PORT_BE=8000
+PORT_FE=5173
+
+cleanup_ports() {
+    for port in $PORT_BE $PORT_FE; do
+        PID=$(lsof -t -i:$port || true)
+        if [ -n "$PID" ]; then
+            kill -9 $PID 2>/dev/null || true
+        fi
+    done
+}
+cleanup_ports
+
+echo "  Starting Backend (Port $PORT_BE)..."
+source .venv/bin/activate
+nohup uvicorn app.main:app --host 0.0.0.0 --port $PORT_BE > $LOG_DIR/backend.log 2>&1 &
+BE_PID=$!
+
+echo "  Starting Frontend (Port $PORT_FE)..."
+cd frontend
+nohup npm run dev -- --port $PORT_FE > ../$LOG_DIR/frontend.log 2>&1 &
+FE_PID=$!
+cd ..
+
+# 7. Wait for Backend Health
+echo -n "  Waiting for services to stabilize..."
+MAX_RETRIES=30
+COUNT=0
+until $(curl -sf -o /dev/null http://localhost:$PORT_BE/health); do
+    printf "."
+    sleep 2
+    COUNT=$((COUNT+1))
+    if [ $COUNT -eq $MAX_RETRIES ]; then
+        echo -e "\n${RED}Backend failed to start. Check $LOG_DIR/backend.log${NC}"
+        exit 1
+    fi
+done
+echo -e " ${GREEN}Ready!${NC}"
+
+# 8. Auto-Sync Registry
+echo "  Syncing Claim Registry..."
+curl -s -X POST http://localhost:$PORT_BE/api/v1/registry/sync > /dev/null || true
+
+# 9. Smart Launch
+echo -n "  Checking configuration state..."
+# Fetch settings and check if any API key is configured (look for masked keys starting with *)
+SETTINGS_JSON=$(curl -s http://localhost:$PORT_BE/api/v1/admin/settings || echo "{}")
+if echo "$SETTINGS_JSON" | grep -q "\*"; then
+    echo -e " ${GREEN}Configured.${NC}"
+    ADMIN_URL="http://localhost:$PORT_FE/documents"
+else
+    echo -e " ${YELLOW}Pending Setup.${NC}"
+    ADMIN_URL="http://localhost:$PORT_FE/admin?tab=settings"
+fi
+
+echo -e "\n${GREEN}${BOLD}✅ Setup Complete! Opening Browser...${NC}"
+echo -e "URL: ${BLUE}${ADMIN_URL}${NC}"
+
+$OPEN_CMD "$ADMIN_URL" 2>/dev/null || echo -e "${YELLOW}Please open $ADMIN_URL in your browser.${NC}"
+
+echo -e "\n------------------------------------------------"
+echo -e "${BOLD}Service Management:${NC}"
+echo -e "  Logs:    tail -f $LOG_DIR/backend.log"
+echo -e "  Stop:    kill $BE_PID $FE_PID"
 echo -e "------------------------------------------------"
