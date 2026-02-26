@@ -73,20 +73,83 @@ else
     pip install -r requirements.txt -q
 fi
 
-# 4. Database Migrations (Graceful check)
-echo -n "  Checking database migrations..."
+# 4. Database Migrations (Graceful check & Auto-fix)
+echo -n "  Verifying database connectivity..."
 if grep -q "postgresql" .env; then
-    # Try to check connection without showing traceback
-    if python3 -c "import psycopg2; import os; from dotenv import load_dotenv; load_dotenv(); dsn=os.getenv('DATABASE_URL'); conn=psycopg2.connect(dsn); conn.close()" > /dev/null 2>&1; then
+    # Helper to check connection and return error code/message
+    CHECK_DB_SCRIPT=$(cat <<EOF
+import psycopg2
+import os
+import sys
+from dotenv import load_dotenv
+load_dotenv()
+dsn = os.getenv('DATABASE_URL')
+try:
+    conn = psycopg2.connect(dsn)
+    conn.close()
+    sys.exit(0)
+except Exception as e:
+    err_str = str(e)
+    if "role \"postgres\" does not exist" in err_str:
+        sys.exit(2)  # Specific role error
+    if "database \"veritas_ai\" does not exist" in err_str:
+        sys.exit(3)  # Database missing
+    print(err_str)
+    sys.exit(1)
+EOF
+)
+
+    DB_STATUS=0
+    python3 -c "$CHECK_DB_SCRIPT" > $LOG_DIR/db_check.err 2>&1 || DB_STATUS=$?
+
+    if [ $DB_STATUS -eq 2 ] && [ "$OS" = "Darwin" ]; then
+        # On Mac, if 'postgres' role fails, try current user
+        CURRENT_USER=$(whoami)
+        echo -n " (fixing role)..."
+        if [ "$OS" = "Darwin" ]; then
+            sed -i '' "s|postgresql://postgres:password@|postgresql://$CURRENT_USER@|g" .env
+        else
+            sed -i "s|postgresql://postgres:password@|postgresql://$CURRENT_USER@|g" .env
+        fi
+        # Re-check
+        python3 -c "$CHECK_DB_SCRIPT" > $LOG_DIR/db_check.err 2>&1 || DB_STATUS=$?
+    fi
+
+    if [ $DB_STATUS -eq 3 ]; then
+        # Try to create the DB if missing
+        echo -n " (creating db)..."
+        CREATE_DB_SCRIPT=$(cat <<EOF
+import psycopg2
+import os
+from dotenv import load_dotenv
+load_dotenv()
+dsn = os.getenv('DATABASE_URL')
+base_dsn = dsn.rsplit('/', 1)[0] + '/postgres'
+conn = psycopg2.connect(base_dsn)
+conn.autocommit = True
+cur = conn.cursor()
+cur.execute('CREATE DATABASE veritas_ai')
+cur.close()
+conn.close()
+EOF
+)
+        python3 -c "$CREATE_DB_SCRIPT" > /dev/null 2>&1 || true
+        # Re-check
+        python3 -c "$CHECK_DB_SCRIPT" > $LOG_DIR/db_check.err 2>&1 || DB_STATUS=$?
+    fi
+
+    if [ $DB_STATUS -eq 0 ]; then
+        echo -e " ${GREEN}Connected.${NC}"
+        echo -n "  Applying migrations..."
         if python3 -m alembic upgrade head > $LOG_DIR/migrations.log 2>&1; then
             echo -e " ${GREEN}Up to date.${NC}"
         else
             echo -e " ${RED}Failed.${NC} (Check $LOG_DIR/migrations.log)"
         fi
     else
-        echo -e " ${YELLOW}Connection failed.${NC}"
-        echo -e "     ${YELLOW}Note:${NC} Ensure Postgres is running and DATABASE_URL in .env is correct."
-        echo -e "     (The 'postgres' role error usually means your local Postgres user differs from .env)"
+        echo -e " ${YELLOW}Failed.${NC}"
+        echo -e "     ${YELLOW}Note:${NC} $(cat $LOG_DIR/db_check.err)"
+        echo -e "     Ensure Postgres is running. Backend may fail on startup."
     fi
 else
     echo -e " ${YELLOW}Skipped.${NC} (No PostgreSQL URL found)"
@@ -103,7 +166,7 @@ if [ ! -d "node_modules" ]; then
         npm install --silent
     fi
 else
-    echo "  Dependencies already installed. Skipping..."
+    echo "  Dependencies already installed."
 fi
 cd ..
 
@@ -146,7 +209,7 @@ until $(curl -sf -o /dev/null http://localhost:$PORT_BE/health); do
 done
 echo -e " ${GREEN}Ready!${NC}"
 
-# 8. Auto-Sync Registry (Idempotent)
+# 8. Auto-Sync Registry
 echo "  Syncing Claim Registry..."
 curl -s -X POST http://localhost:$PORT_BE/api/v1/registry/sync > /dev/null || true
 
