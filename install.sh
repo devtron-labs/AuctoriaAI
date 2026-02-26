@@ -603,13 +603,6 @@ PYEOF
 
     if [ "$TYPE" = "SUCCESS" ]; then
         success "Database connected: $DSN"
-        # Update .env with working DSN
-        if [ "$OS" = "Darwin" ]; then
-            sed -i '' "s#^DATABASE_URL=.*#DATABASE_URL=$DSN#g" .env
-        else
-            sed -i "s#^DATABASE_URL=.*#DATABASE_URL=$DSN#g" .env
-        fi
-
     elif [ "$TYPE" = "CREATE" ]; then
         info "Database 'veritas_ai' doesn't exist. Creating..."
         .venv/bin/python3 -c "
@@ -628,13 +621,6 @@ conn.close()
         else
             fail "Could not create database. Try manually: createdb veritas_ai"
         fi
-
-        # Update .env with the working DSN
-        if [ "$OS" = "Darwin" ]; then
-            sed -i '' "s#^DATABASE_URL=.*#DATABASE_URL=$DSN#g" .env
-        else
-            sed -i "s#^DATABASE_URL=.*#DATABASE_URL=$DSN#g" .env
-        fi
     else
         fail "Could not connect to PostgreSQL."
         echo -e "  ${YELLOW}Tried multiple auth methods. Please check:${NC}"
@@ -644,6 +630,32 @@ conn.close()
         echo -e "  ${YELLOW}Aborting migration to avoid invalid user errors.${NC}"
         return 1
     fi
+
+    # Robustly update .env using Python
+    .venv/bin/python3 -c "
+import os
+def update_env(file_path, key, value):
+    lines = []
+    found = False
+    if os.path.exists(file_path):
+        with open(file_path, 'r') as f:
+            lines = f.readlines()
+    
+    for i, line in enumerate(lines):
+        if line.strip().startswith(f'{key}='):
+            lines[i] = f'{key}={value}\\n'
+            found = True
+            break
+    
+    if not found:
+        lines.append(f'{key}={value}\\n')
+    
+    with open(file_path, 'w') as f:
+        f.writelines(lines)
+
+update_env('.env', 'DATABASE_URL', '$DSN')
+"
+    success ".env updated with working DSN"
 
     # Run migrations
     info "Applying database migrations..."

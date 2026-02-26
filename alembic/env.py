@@ -45,9 +45,18 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    # Use the URL from config (which might have been overridden by DATABASE_URL)
+    """Run migrations in 'online' mode.
+
+    In this scenario we need to create an Engine
+    and associate a connection with the context.
+
+    """
+    # Override sqlalchemy.url with environment variable if provided
+    db_url = os.getenv("DATABASE_URL")
+    if db_url:
+        config.set_main_option("sqlalchemy.url", db_url)
+
     url = config.get_main_option("sqlalchemy.url")
-    
     from sqlalchemy import create_engine
     connectable = create_engine(url, poolclass=pool.NullPool)
 

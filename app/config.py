@@ -1,10 +1,11 @@
+import os
+import getpass
 from typing import List
-
 from pydantic_settings import BaseSettings
 
-
 class Settings(BaseSettings):
-    database_url: str = "postgresql://postgres:password@localhost:5432/veritas_ai"
+    # Default to current user on localhost, which is the most common macOS/Homebrew setup.
+    database_url: str = f"postgresql://{getpass.getuser()}@localhost:5432/veritas_ai"
 
     # Deployment environment — controls dev-mode safety bypasses.
     # Allowed values: local | development | staging | production
