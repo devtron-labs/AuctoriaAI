@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # AuctoriaAI Fully Automated Installation & Startup Script
-# Optimized for zero-config: Handles broken or non-standard PostgreSQL installations.
+# Optimized for zero-config: Handles broken Homebrew aliases and custom PG installs.
 
 set -e
 
@@ -35,7 +35,7 @@ has_cmd() {
 echo -e "${BLUE}🔍 Checking System Dependencies...${NC}"
 
 # --- PostgreSQL Auto-Install & Start ---
-if ! has_cmd "psql"; then
+if ! has_cmd "psql" && ! has_cmd "pg_isready"; then
     echo -e "  ${YELLOW}PostgreSQL not found. Installing...${NC}"
     if [ "$OS" = "Darwin" ]; then
         if ! has_cmd "brew"; then
@@ -57,29 +57,36 @@ fi
 if ! nc -z localhost 5432 >/dev/null 2>&1; then
     echo -e "  ${YELLOW}PostgreSQL is stopped. Starting service...${NC}"
     if [ "$OS" = "Darwin" ]; then
-        # 1. Try to find the service name from brew services list (most accurate)
-        ACTUAL_SERVICE=$(brew services list 2>/dev/null | awk '{print $1}' | grep "^postgresql" | head -n 1 || echo "")
+        # Check all installed postgresql formulas and try to start the first one that exists
+        INSTALLED_PG_VERSIONS=$(brew list --formula 2>/dev/null | grep "^postgresql" || echo "")
         
-        # 2. Fallback to brew list if services list didn't help
-        if [ -z "$ACTUAL_SERVICE" ]; then
-            ACTUAL_SERVICE=$(brew list --formula 2>/dev/null | grep "^postgresql" | head -n 1 || echo "")
-        fi
-        
-        # 3. Final fallback to generic name
-        if [ -z "$ACTUAL_SERVICE" ]; then
-            ACTUAL_SERVICE="postgresql"
+        STARTED=false
+        if [ -n "$INSTALLED_PG_VERSIONS" ]; then
+            for formula in $INSTALLED_PG_VERSIONS; do
+                echo "  Attempting to start formula: $formula"
+                if brew services start "$formula" 2>/dev/null || brew services restart "$formula" 2>/dev/null; then
+                    STARTED=true
+                    break
+                fi
+            done
         fi
 
-        echo "  Attempting to start: $ACTUAL_SERVICE"
-        brew services start "$ACTUAL_SERVICE" || brew services restart "$ACTUAL_SERVICE" || true
+        if [ "$STARTED" = false ]; then
+            echo "  Trying generic brew services start..."
+            brew services start postgresql 2>/dev/null || true
+        fi
     else
         sudo systemctl start postgresql || true
     fi
     
-    # Wait for startup
+    # Wait for startup with pg_isready if available
     echo -n "  Waiting for DB to wake up"
-    for i in {1..8}; do
-        if nc -z localhost 5432 >/dev/null 2>&1; then break; fi
+    for i in {1..10}; do
+        if has_cmd "pg_isready"; then
+            if pg_isready -h localhost -p 5432 >/dev/null 2>&1; then break; fi
+        elif nc -z localhost 5432 >/dev/null 2>&1; then 
+            break; 
+        fi
         printf "."
         sleep 1
     done
@@ -89,7 +96,7 @@ fi
 # Final check
 if ! nc -z localhost 5432 >/dev/null 2>&1; then
     echo -e "  ${RED}✘ Failed to start PostgreSQL.${NC}"
-    echo -e "  ${YELLOW}Note:${NC} If you are using Postgres.app or a custom install, please start it manually."
+    echo -e "  ${YELLOW}Note:${NC} If you are using pgAdmin, Postgres.app, or a manual install, please ensure PostgreSQL is running on port 5432."
     echo -e "  Then run this script again."
     exit 1
 else
