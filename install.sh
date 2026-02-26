@@ -557,6 +557,9 @@ attempts = [
     original_dsn,
     f"postgresql://{current_user}@localhost/{db_name}",
     f"postgresql://postgres@localhost/{db_name}",
+    f"postgresql://{current_user}@localhost/postgres",
+    f"postgresql://{current_user}@localhost/{current_user}",
+    f"postgresql://{current_user}@localhost/template1",
     f"postgresql://{current_user}@127.0.0.1/{db_name}",
     f"postgresql://postgres@127.0.0.1/{db_name}",
     f"postgresql://{current_user}:password@localhost/{db_name}",
@@ -570,14 +573,14 @@ for dsn in attempts:
         print(f"SUCCESS|{dsn}")
         sys.exit(0)
 
-# DB doesn't exist yet — try connecting to 'postgres' to create it
+# DB doesn't exist yet — try connecting to an administrative DB to create it
 create_attempts = [
     f"postgresql://{current_user}@localhost/postgres",
+    f"postgresql://{current_user}@localhost/{current_user}",
+    f"postgresql://{current_user}@localhost/template1",
     f"postgresql://postgres@localhost/postgres",
     f"postgresql://{current_user}@127.0.0.1/postgres",
     f"postgresql://postgres@127.0.0.1/postgres",
-    f"postgresql://{current_user}:password@localhost/postgres",
-    f"postgresql://postgres:password@localhost/postgres",
 ]
 
 for dsn in create_attempts:
@@ -602,9 +605,9 @@ PYEOF
         success "Database connected: $DSN"
         # Update .env with working DSN
         if [ "$OS" = "Darwin" ]; then
-            sed -i '' "s|^DATABASE_URL=.*|DATABASE_URL=$DSN|g" .env
+            sed -i '' "s#^DATABASE_URL=.*#DATABASE_URL=$DSN#g" .env
         else
-            sed -i "s|^DATABASE_URL=.*|DATABASE_URL=$DSN|g" .env
+            sed -i "s#^DATABASE_URL=.*#DATABASE_URL=$DSN#g" .env
         fi
 
     elif [ "$TYPE" = "CREATE" ]; then
@@ -628,22 +631,23 @@ conn.close()
 
         # Update .env with the working DSN
         if [ "$OS" = "Darwin" ]; then
-            sed -i '' "s|^DATABASE_URL=.*|DATABASE_URL=$DSN|g" .env
+            sed -i '' "s#^DATABASE_URL=.*#DATABASE_URL=$DSN#g" .env
         else
-            sed -i "s|^DATABASE_URL=.*|DATABASE_URL=$DSN|g" .env
+            sed -i "s#^DATABASE_URL=.*#DATABASE_URL=$DSN#g" .env
         fi
     else
         fail "Could not connect to PostgreSQL."
         echo -e "  ${YELLOW}Tried multiple auth methods. Please check:${NC}"
         echo -e "  ${YELLOW}  1. PostgreSQL is running: pg_isready${NC}"
-        echo -e "  ${YELLOW}  2. Your user can connect: psql -U $(whoami) -d postgres${NC}"
+        echo -e "  ${YELLOW}  2. Your user can connect: psql -d postgres${NC}"
         echo -e "  ${YELLOW}  3. Update DATABASE_URL in .env manually${NC}"
-        echo -e "  ${YELLOW}Continuing without DB — the app will fail at startup.${NC}"
-        # Don't exit — let user fix .env and restart
+        echo -e "  ${YELLOW}Aborting migration to avoid invalid user errors.${NC}"
+        return 1
     fi
 
     # Run migrations
     info "Applying database migrations..."
+    export DATABASE_URL="$DSN"
     if PYTHONPATH=. .venv/bin/python3 -m alembic upgrade head > "$LOG_DIR/migrations.log" 2>&1; then
         success "Migrations up to date"
     else

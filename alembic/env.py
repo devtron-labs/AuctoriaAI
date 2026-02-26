@@ -11,8 +11,13 @@ import app.models.models  # noqa: F401
 
 import os
 
-# Load .env file if it exists
-load_dotenv()
+# Load .env file from project root if it exists
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+env_path = os.path.join(base_dir, '.env')
+if os.path.exists(env_path):
+    load_dotenv(env_path)
+else:
+    load_dotenv()
 
 config = context.config
 
