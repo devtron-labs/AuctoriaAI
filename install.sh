@@ -1,8 +1,7 @@
 #!/bin/bash
 
 # AuctoriaAI Fully Automated Installation & Startup Script
-# This script installs, starts services in the background, and opens the Admin Panel.
-# Optimized for idempotency and clean error handling.
+# Optimized for zero-config database setup across Mac and Linux.
 
 set -e
 
@@ -20,7 +19,7 @@ mkdir -p $LOG_DIR
 echo -e "${BLUE}${BOLD}🚀 AuctoriaAI: Automated Setup & Startup${NC}"
 echo -e "------------------------------------------------"
 
-# Detect OS & Browser Open Command
+# Detect OS
 OS="$(uname -s)"
 OPEN_CMD="open"
 if [ "$OS" = "Linux" ]; then
@@ -74,112 +73,116 @@ else
     pip install -r requirements.txt -q
 fi
 
-# 4. Database Migrations (Aggressive Fix)
-echo -n "  Verifying database connectivity..."
+# 4. Database Probe & Migration
+echo -n "  Probing database connectivity..."
 if grep -q "postgresql" .env; then
     
-    CHECK_DB_SCRIPT=$(cat <<EOF
+    # This Python script probes for a working connection and outputs the working DSN
+    PROBE_SCRIPT=$(cat <<EOF
 import psycopg2
 import os
 import sys
+import getpass
 from dotenv import load_dotenv
-load_dotenv()
-dsn = os.getenv('DATABASE_URL')
-if not dsn:
-    sys.exit(1)
-try:
-    conn = psycopg2.connect(dsn)
-    # Check if a core table exists
-    cur = conn.cursor()
-    cur.execute("select exists(select * from information_schema.tables where table_name='system_settings')")
-    exists = cur.fetchone()[0]
-    conn.close()
-    if not exists:
-        sys.exit(4) # Connected but not migrated
-    sys.exit(0)
-except Exception as e:
-    err_str = str(e)
-    if "role \"postgres\" does not exist" in err_str:
-        sys.exit(2)
-    if "database \"veritas_ai\" does not exist" in err_str:
-        sys.exit(3)
-    sys.stderr.write(err_str)
-    sys.exit(1)
-EOF
-)
 
-    DB_STATUS=0
-    python3 -c "$CHECK_DB_SCRIPT" 2> $LOG_DIR/db_check.err || DB_STATUS=$?
-
-    # AUTO-FIX 1: Role "postgres" does not exist (Common on Mac)
-    if [ $DB_STATUS -eq 2 ]; then
-        CURRENT_USER=$(whoami)
-        echo -n " (fixing role)..."
-        # Try to strip the user:password and use current user without password
-        if [ "$OS" = "Darwin" ]; then
-            sed -i '' "s|postgresql://[^@]*@|postgresql://$CURRENT_USER@|g" .env
-        else
-            sed -i "s|postgresql://[^@]*@|postgresql://$CURRENT_USER@|g" .env
-        fi
-        python3 -c "$CHECK_DB_SCRIPT" 2> $LOG_DIR/db_check.err || DB_STATUS=$?
-    fi
-
-    # AUTO-FIX 2: Database does not exist
-    if [ $DB_STATUS -eq 3 ]; then
-        echo -n " (creating db)..."
-        if command -v createdb >/dev/null 2>&1; then
-            createdb veritas_ai 2>/dev/null || true
-        fi
-        
-        CREATE_DB_SCRIPT=$(cat <<EOF
-import psycopg2
-import os
-import sys
-from dotenv import load_dotenv
-load_dotenv()
-dsn = os.getenv('DATABASE_URL')
-try:
-    # Connect to default 'postgres' or 'template1'
+def test_conn(dsn):
     try:
-        base_dsn = dsn.rsplit('/', 1)[0] + '/postgres'
-        conn = psycopg2.connect(base_dsn)
+        conn = psycopg2.connect(dsn, connect_timeout=2)
+        conn.close()
+        return True
     except:
-        base_dsn = dsn.rsplit('/', 1)[0] + '/template1'
-        conn = psycopg2.connect(base_dsn)
-    conn.autocommit = True
-    cur = conn.cursor()
-    cur.execute('CREATE DATABASE veritas_ai')
-    cur.close()
-    conn.close()
-except Exception as e:
-    if "already exists" not in str(e):
-        sys.stderr.write(str(e))
-        sys.exit(1)
+        return False
+
+load_dotenv()
+original_dsn = os.getenv('DATABASE_URL')
+db_name = original_dsn.rsplit('/', 1)[1] if '/' in original_dsn else 'veritas_ai'
+base_url = "localhost:5432"
+
+# Try these in order:
+# 1. Original DSN from .env
+# 2. Current OS user (no password)
+# 3. 'postgres' user (no password)
+# 4. 'postgres' user (password 'password')
+
+attempts = [
+    original_dsn,
+    f"postgresql://{getpass.getuser()}@{base_url}/{db_name}",
+    f"postgresql://postgres@{base_url}/{db_name}",
+    f"postgresql://postgres:password@{base_url}/{db_name}"
+]
+
+working_dsn = None
+for dsn in attempts:
+    if test_conn(dsn):
+        working_dsn = dsn
+        break
+
+if working_dsn:
+    # Check if migrated
+    try:
+        conn = psycopg2.connect(working_dsn)
+        cur = conn.cursor()
+        cur.execute("select exists(select * from information_schema.tables where table_name='system_settings')")
+        migrated = cur.fetchone()[0]
+        conn.close()
+        print(f"SUCCESS|{working_dsn}|{'YES' if migrated else 'NO'}")
+    except:
+        print(f"SUCCESS|{working_dsn}|NO")
+else:
+    # If all failed because DB doesn't exist, try connecting to 'postgres' system DB to find working auth
+    auth_attempts = [
+        f"postgresql://{getpass.getuser()}@{base_url}/postgres",
+        f"postgresql://postgres@{base_url}/postgres",
+        f"postgresql://postgres:password@{base_url}/postgres"
+    ]
+    working_auth = None
+    for dsn in auth_attempts:
+        if test_conn(dsn):
+            working_auth = dsn
+            break
+    
+    if working_auth:
+        # We found working credentials, but the database itself is missing
+        final_dsn = working_auth.rsplit('/', 1)[0] + f"/{db_name}"
+        print(f"CREATE|{final_dsn}")
+    else:
+        print("FAIL|No working credentials found")
 EOF
 )
-        python3 -c "$CREATE_DB_SCRIPT" 2>> $LOG_DIR/db_check.err || true
-        python3 -c "$CHECK_DB_SCRIPT" 2> $LOG_DIR/db_check.err || DB_STATUS=$?
-    fi
 
-    if [ $DB_STATUS -eq 0 ] || [ $DB_STATUS -eq 4 ]; then
-        if [ $DB_STATUS -eq 4 ]; then
-             echo -e " ${YELLOW}Connected (Needs Migration).${NC}"
+    RESULT=$(python3 -c "$PROBE_SCRIPT")
+    TYPE=$(echo $RESULT | cut -d'|' -f1)
+    DSN=$(echo $RESULT | cut -d'|' -f2)
+    MIGRATED=$(echo $RESULT | cut -d'|' -f3)
+
+    if [ "$TYPE" = "SUCCESS" ] || [ "$TYPE" = "CREATE" ]; then
+        # Update .env with the working DSN
+        if [ "$OS" = "Darwin" ]; then
+            sed -i '' "s|^DATABASE_URL=.*|DATABASE_URL=$DSN|g" .env
         else
-             echo -e " ${GREEN}Connected.${NC}"
+            sed -i "s|^DATABASE_URL=.*|DATABASE_URL=$DSN|g" .env
         fi
         
+        if [ "$TYPE" = "CREATE" ]; then
+            echo -n " (creating db)..."
+            createdb veritas_ai 2>/dev/null || python3 -c "import psycopg2; conn=psycopg2.connect('$DSN'.rsplit('/', 1)[0] + '/postgres'); conn.autocommit=True; conn.cursor().execute('CREATE DATABASE veritas_ai'); conn.close()" 2>/dev/null || true
+            echo -e " ${GREEN}Created.${NC}"
+        else
+            echo -e " ${GREEN}Connected.${NC}"
+        fi
+
         echo -n "  Applying migrations..."
         if PYTHONPATH=. .venv/bin/python3 -m alembic upgrade head > $LOG_DIR/migrations.log 2>&1; then
             echo -e " ${GREEN}Up to date.${NC}"
         else
             echo -e " ${RED}Failed.${NC}"
             echo -e "     ${RED}Error:${NC} Check $LOG_DIR/migrations.log"
-            cat $LOG_DIR/migrations.log | tail -n 5
+            tail -n 5 $LOG_DIR/migrations.log
         fi
     else
-        echo -e " ${YELLOW}Failed.${NC}"
-        CLEAN_ERR=$(tail -n 1 $LOG_DIR/db_check.err | sed 's/FATAL: //g')
-        echo -e "     ${YELLOW}Note:${NC} $CLEAN_ERR"
+        echo -e " ${RED}Failed.${NC}"
+        echo -e "     ${YELLOW}Note:${NC} Could not find any working PostgreSQL credentials."
+        echo -e "     Ensure Postgres is running on port 5432."
     fi
 else
     echo -e " ${YELLOW}Skipped.${NC} (No PostgreSQL URL found)"
