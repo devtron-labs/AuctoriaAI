@@ -752,11 +752,22 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
+### Lightweight Setup (Non-Docker, Faster)
+
+For the fastest installation and minimal resource usage, use the lightweight installation script. This sets up a local Python virtual environment and installs frontend dependencies without the overhead of Docker containers.
+
+```bash
+# Run the lightweight installer
+chmod +x install.sh
+./install.sh
+```
+
 **What this does:**
-1. Verifies Docker is installed.
-2. Creates your `.env` file from the example.
-3. Initializes the document storage directory.
-4. Builds and starts all services in the background.
+1. Checks for local dependencies (Python, Node, npm).
+2. Sets up a Python virtual environment (`.venv`).
+3. Installs backend and frontend dependencies (supports `uv` and `pnpm` if available).
+4. Configures `.env` and storage directories.
+5. Performs database migrations (if PostgreSQL is accessible).
 
 **Access the application:**
 - **Frontend UI:** [http://localhost](http://localhost)
