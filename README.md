@@ -4,9 +4,15 @@ AuctoriaAI is a full-stack governance platform that enforces quality, accuracy, 
 
 ## Recent Updates
 
+**Zero-Config Fail-Safe Installer** (February 2026)
+- New `install.sh` script with auto-detection/installation of Python 3.13, Node.js, and PostgreSQL
+- Robust PostgreSQL startup with `pg_isready` loops and `pg_ctl` fallbacks
+- Automatic Homebrew bootstrapping on macOS
+- Intelligent environment-aware `.env` configuration and database seeding
+
 **Background Pipeline & Reliability** (February 2026)
 - Moved prompt-first draft generation to background tasks for better UX
-- Added automated retries for transient LLM failures (timeouts, rate limits)
+- Added `Tenacity`-based automated retries for transient LLM failures (5xx, timeouts)
 - New pipeline tracking columns: `current_stage`, `error_message`, and `validation_progress`
 - Frontend now features a real-time progress bar for document generation and evaluation
 
@@ -492,7 +498,9 @@ All endpoints are prefixed with `/api/v1/`.
 - **Registry freshness gate**: Before any extraction, checks registry age
   - Empty registry → `RegistryNotInitializedError` (bypassed in `local`/`development` ENV)
   - Stale registry → `RegistryStaleError`
-- Calls Claude API with a structured extraction prompt
+- Calls configured LLM API (default Claude) with a structured extraction prompt
+- **Resilience**: Uses `Tenacity` for exponential backoff on transient 5xx/timeout errors
+- **Progress Tracking**: Real-time updates to `validation_progress` and `current_stage`
 - Validates response as `FactSheetData` JSON schema
 - `sync_registry()` seeds 12 default claims (integrations, compliance, performance)
 
@@ -731,6 +739,14 @@ services/
 
 ## 12. Running Locally
 
+### One-Liner Installation (Recommended)
+
+The fastest way to get started. This single command will clone the repository, install all dependencies (Python, Node, PostgreSQL), and start the services:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/devtron-labs/AuctoriaAI/main/install.sh | bash
+```
+
 ### Prerequisites
 - **Docker** and **Docker Compose** (Recommended for easiest setup)
 - *OR* Manual setup:
@@ -752,22 +768,23 @@ chmod +x setup.sh
 ./setup.sh
 ```
 
-### Lightweight Setup (Non-Docker, Faster)
+### Lightweight Setup (Fail-Safe, Fast)
 
-For the fastest installation and minimal resource usage, use the lightweight installation script. This sets up a local Python virtual environment and installs frontend dependencies without the overhead of Docker containers.
+For the fastest installation and minimal resource usage, use the **Zero-Config Fail-Safe Installer**. This script is designed for maximum resilience across macOS and Linux.
 
 ```bash
-# Run the lightweight installer
+# Run the fail-safe installer
 chmod +x install.sh
 ./install.sh
 ```
 
 **What this does:**
-1. Checks for local dependencies (Python, Node, npm).
-2. Sets up a Python virtual environment (`.venv`).
-3. Installs backend and frontend dependencies (supports `uv` and `pnpm` if available).
-4. Configures `.env` and storage directories.
-5. Performs database migrations (if PostgreSQL is accessible).
+1. **Auto-Dependency Management**: Checks for and auto-installs Homebrew (macOS), Node.js, and a compatible Python (3.11–3.13).
+2. **Robust PostgreSQL**: Installs and starts PostgreSQL 17; uses `pg_isready` loops and `pg_ctl` fallbacks to ensure the service is ready.
+3. **Smart venv**: Creates a Python virtual environment using the *correct* resolved Python binary.
+4. **Resilient DB Setup**: Probes multiple authentication strategies to find a working PostgreSQL connection; auto-creates the `veritas_ai` database if missing.
+5. **Auto-Sync**: Performs migrations and automatically seeds the initial claim registry.
+6. **One-Command Start**: Safely cleans up stale ports and launches both Backend and Frontend in the background.
 
 **Access the application:**
 - **Frontend UI:** [http://localhost](http://localhost)
